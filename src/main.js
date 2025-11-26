@@ -95,6 +95,12 @@ async function init() {
     updateLoadingProgress(10);
     logTest(`Initializing scene... (v${VERSION} #${BUILD_NUMBER})`, 'info');
     
+    // Update version display in UI
+    const versionDisplayEl = document.getElementById('version-display');
+    if (versionDisplayEl) {
+        versionDisplayEl.textContent = `v${VERSION} #${BUILD_NUMBER}`;
+    }
+    
     // Update page title with version and build number
     if (typeof document !== 'undefined') {
         document.title = `🏝️ Island Simulation v${VERSION} (#${BUILD_NUMBER})`;
