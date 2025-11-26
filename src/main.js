@@ -47,6 +47,9 @@ import {
     AnimationSystem,
     ANIM_STATES
 } from './systems/animations.js';
+import {
+    CarryingSystem
+} from './systems/carrying.js';
 
 // ============================================
 // GLOBAL STATE
@@ -991,7 +994,7 @@ function planOrMaintainTask(member) {
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
         member.targetAngle = angleTo(member.mesh.position, hut.position);
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
         return;
     }
 
@@ -1062,7 +1065,7 @@ function executeAgentState(member, delta) {
                 handleEating(member);
                 member.state = 'idle';
                 member.task = null;
-                clearCarryVisual(member);
+                CarryingSystem.clearCarryVisual(member);
             }
             break;
 
@@ -1129,7 +1132,7 @@ function updateWalking(member, delta) {
     if (!targetPos) {
         member.state = 'idle';
         member.task = null;
-        clearCarryVisual(member);
+        CarryingSystem.clearCarryVisual(member);
         return;
     }
 
@@ -1198,7 +1201,7 @@ function updateGathering(member, delta) {
         // Inventory full -> haul
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
         return;
     }
 
@@ -1219,7 +1222,7 @@ function updateGathering(member, delta) {
     awardXP(member.skills, task.resourceId === 'coconut' ? 'gather_coconut' :
         (task.resourceId === 'wood' ? 'gather_wood' : 'gather_stone'), []);
 
-    ensureCarryVisual(member);
+    CarryingSystem.updateCarryVisual(member);
 
     // After gather, immediately haul to hut
     member.state = 'hauling';
@@ -1318,7 +1321,7 @@ function onDestinationReached(member) {
             hut.storage[resourceId] += amount;
         });
 
-        clearCarryVisual(member);
+        CarryingSystem.clearCarryVisual(member);
         member.state = 'idle';
         member.task = null;
         return;
@@ -1360,7 +1363,7 @@ function onDestinationReached(member) {
         if (take > 0) {
             hut.storage.coconut -= take;
             addToInventory(member.inventory, 'coconut', take);
-            ensureCarryVisual(member);
+            CarryingSystem.updateCarryVisual(member);
         }
         member.state = 'idle';
         member.task = null;
@@ -1376,7 +1379,7 @@ function onDestinationReached(member) {
             addToInventory(targetMember.inventory, 'coconut', 1);
             logTest(`Agent ${member.id} helped ${targetMember.id} with food`, 'success');
         }
-        clearCarryVisual(member);
+        CarryingSystem.clearCarryVisual(member);
         member.state = 'idle';
         member.task = null;
         return;
@@ -1414,7 +1417,7 @@ function handleEating(member) {
         // Carry leftovers back to hut
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
     }
 }
 
@@ -1432,12 +1435,17 @@ function normalizeAngle(a) {
     return a;
 }
 
-function findNearestPalmWithCoconuts(member) {
+function findNearestPalmWithCoconuts(member, coordinator) {
     let nearest = null;
     let nearestDist = Infinity;
 
     allTrees.forEach(treeData => {
         if (treeData.mesh.userData.treeType === 'palm' && treeData.mesh.userData.coconuts > 0) {
+            // Skip if already claimed by another agent
+            if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+                return;
+            }
+
             const dist = treeData.mesh.position.distanceTo(member.mesh.position);
             if (dist < nearestDist) {
                 nearestDist = dist;
@@ -1503,11 +1511,16 @@ function hutAsInventory() {
 }
 
 // Additional helper functions for improved AI
-function findNearestJungleTree(member) {
+function findNearestJungleTree(member, coordinator) {
     let nearest = null;
     let nearestDist = Infinity;
 
     allTrees.forEach(treeData => {
+        // Skip if already claimed by another agent
+        if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+            return;
+        }
+
         const dist = treeData.mesh.position.distanceTo(member.mesh.position);
         if (dist < nearestDist) {
             nearestDist = dist;
@@ -1518,11 +1531,16 @@ function findNearestJungleTree(member) {
     return nearest;
 }
 
-function findNearestRock(member) {
+function findNearestRock(member, coordinator) {
     let nearest = null;
     let nearestDist = Infinity;
 
     allRocks.forEach(rock => {
+        // Skip if already claimed by another agent
+        if (coordinator && coordinator.isResourceClaimed(rock, member.id)) {
+            return;
+        }
+
         const dist = rock.position.distanceTo(member.mesh.position);
         if (dist < nearestDist) {
             nearestDist = dist;

@@ -14,13 +14,35 @@ export class TribeCoordinator {
     constructor() {
         this.taskAssignments = new Map(); // agentId -> assigned task priority
         this.criticalNeeds = new Map(); // agentId -> { hunger, energy, needsHelp }
+        this.claimedResources = new Map(); // resourceTargetId -> agentId (prevents duplicates)
     }
 
     /**
      * Analyze tribe state and update critical needs
+     * Also clean up old resource claims
      */
     analyzeTribe(tribeMembers, hut) {
         this.criticalNeeds.clear();
+
+        // Clean up resource claims for agents no longer targeting them
+        const activeAgents = new Set(tribeMembers.map(m => m.id));
+        for (const [resourceId, agentId] of this.claimedResources.entries()) {
+            if (!activeAgents.has(agentId)) {
+                this.claimedResources.delete(resourceId);
+            }
+        }
+
+        // Also clean claims where agent changed task
+        tribeMembers.forEach(member => {
+            if (!member.task || !member.task.target) {
+                // Agent not targeting a resource, clear their claims
+                for (const [resourceId, agentId] of this.claimedResources.entries()) {
+                    if (agentId === member.id) {
+                        this.claimedResources.delete(resourceId);
+                    }
+                }
+            }
+        });
 
         tribeMembers.forEach(member => {
             if (!member.alive) return;
@@ -82,6 +104,33 @@ export class TribeCoordinator {
         return tribeMembers.filter(m =>
             m.alive && m.task && m.task.type === taskType
         ).length;
+    }
+
+    /**
+     * Check if a resource is already claimed by another agent
+     */
+    isResourceClaimed(resourceTarget, agentId) {
+        const targetId = resourceTarget.uuid || resourceTarget.id;
+        const claimingAgent = this.claimedResources.get(targetId);
+        return claimingAgent && claimingAgent !== agentId;
+    }
+
+    /**
+     * Claim a resource for an agent
+     */
+    claimResource(resourceTarget, agentId) {
+        const targetId = resourceTarget.uuid || resourceTarget.id;
+        this.claimedResources.set(targetId, agentId);
+    }
+
+    /**
+     * Release a resource claim
+     */
+    releaseResource(resourceTarget, agentId) {
+        const targetId = resourceTarget.uuid || resourceTarget.id;
+        if (this.claimedResources.get(targetId) === agentId) {
+            this.claimedResources.delete(targetId);
+        }
     }
 }
 
@@ -227,7 +276,7 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
     // Try to gather the most urgent resource
     for (const resource of resourceTasks) {
         if (resource.urgency > 0.3) { // Only gather if somewhat needed
-            const target = resource.findFunc(member);
+            const target = resource.findFunc(member, coordinator); // Pass coordinator to check claims
             if (target) {
                 // Check if too many agents are already gathering this
                 const gatherType = `gather_${resource.type}`;
@@ -235,6 +284,9 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
                 const optimalWorkers = Math.ceil(tribeMembers.filter(m => m.alive).length * resource.urgency * 0.6);
 
                 if (workersCount < optimalWorkers) {
+                    // Claim this resource to prevent others from targeting it
+                    coordinator.claimResource(target, member.id);
+
                     member.state = 'walking';
                     member.task = {
                         type: gatherType,
@@ -256,8 +308,11 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
     // If nothing else to do, gather the least stocked resource
     // This ensures agents are ALWAYS productive
     const leastStocked = resourceTasks[0]; // Already sorted by urgency
-    const target = leastStocked.findFunc(member);
+    const target = leastStocked.findFunc(member, coordinator); // Pass coordinator
     if (target) {
+        // Claim this resource
+        coordinator.claimResource(target, member.id);
+
         member.state = 'walking';
         member.task = {
             type: `gather_${leastStocked.type}`,
