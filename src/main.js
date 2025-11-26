@@ -166,8 +166,8 @@ async function init() {
     
     updateLoadingProgress(95);
     
-    // Initial time of day - SUNRISE
-    CONFIG.timeOfDay = 0;
+    // Initial time of day - MORNING
+    CONFIG.timeOfDay = 0.23;
     updateTimeOfDay();
     
     // Run initial sanity checks

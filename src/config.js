@@ -23,7 +23,7 @@ export const CONFIG = {
     
     // Simulation
     simulationSpeed: 1, // 1x to 50x
-    timeOfDay: 0, // 0 = sunrise (DEFAULT), 0.5 = midday, 1 = sunset
+    timeOfDay: 0.23, // 0 = sunrise, 0.5 = midday, 1 = sunset (DEFAULT: 0.23 = morning)
     autoPlayTime: false,
     visualQuality: 'high', // 'high' or 'low'
     showDebug: true,
