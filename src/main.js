@@ -1414,7 +1414,8 @@ function resolveTaskTargetPosition(member) {
 
     // Tasks that go to hut
     if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food' ||
-        task.type === 'patrol_to_hut' || task.type === 'go_hut_for_helping') {
+        task.type === 'patrol_to_hut' || task.type === 'go_hut_for_helping' ||
+        task.type === 'get_spear_from_hut') {
         return hut ? hut.position : null;
     }
 
@@ -1549,6 +1550,31 @@ function onDestinationReached(member) {
         return;
     }
 
+    // Get spear from hut
+    if (task.type === 'get_spear_from_hut' && hut) {
+        if (hut.storage.fishing_spear > 0) {
+            const toolData = member.inventory.tools.get('fishing_spear');
+            const currentCount = toolData?.count || (toolData ? 1 : 0);
+            if (currentCount < 2) {
+                if (addTool(member.inventory, 'fishing_spear')) {
+                    hut.storage.fishing_spear--;
+                    equipTool(member.inventory, 'fishing_spear');
+                    CarryingSystem.attachSpear(member);
+                }
+            }
+        }
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+    
+    // Handle escape_water task completion
+    if (task.type === 'escape_water') {
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+    
     // Help agent - give them food, fish, or spear
     if (task.type === 'help_agent') {
         const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
