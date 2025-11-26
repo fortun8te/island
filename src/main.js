@@ -5,6 +5,9 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import GUI from 'lil-gui';
 
 import { CONFIG, seededRandom, resetSeed } from './config.js';
@@ -33,34 +36,17 @@ import {
     updateNeeds,
     consumeFood as applyFoodToNeeds
 } from './systems/needs.js';
-import {
+import { 
     createAgentSkills,
     getGatheringSpeed,
     getGatheringYield,
     awardXP
 } from './systems/skills.js';
-import {
-    TribeCoordinator,
-    improvedPlanTask,
-    improvedIdleBehavior
-} from './systems/ai.js';
-import {
-    AnimationSystem,
-    ANIM_STATES
-} from './systems/animations.js';
-import {
-    CarryingSystem
-} from './systems/carrying.js';
-import {
-    FishingSystem,
-    FISHING_TASKS,
-    FISHING_CONFIG
-} from './systems/fishing.js';
 
 // ============================================
 // GLOBAL STATE
 // ============================================
-let scene, camera, renderer, clock;
+let scene, camera, renderer, clock, composer;
 let water, sky, sun, ambientLight, hemiLight, fillLight;
 let island;
 let hut; // central storage / shelter
@@ -69,8 +55,7 @@ let allRocks = [];
 let allBushes = [];
 let tribeMembers = [];
 let fishList = [];
-let tribeCoordinator; // AI coordination system
-let fishingSystem; // Fishing mechanics system
+let particles = [];
 
 // Camera state
 let cameraYaw = 0, cameraPitch = 0;
@@ -87,6 +72,7 @@ let frameCount = 0;
 let currentFPS = 60;
 let stepsPerSecond = 0;
 let stepCountThisSecond = 0;
+let windTime = 0;
 
 // ============================================
 // INITIALIZATION
@@ -123,7 +109,20 @@ async function init() {
     renderer.shadowMap.enabled = CONFIG.visualQuality === 'high';
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
+
+    // Post-processing
+    composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.6,  // strength
+        0.4,  // radius
+        0.85  // threshold
+    );
+    composer.addPass(bloomPass);
+
     updateLoadingProgress(30);
     
     // Build scene
@@ -148,16 +147,10 @@ async function init() {
     createHut();
     
     createFish();
+    createParticles();
     createTribeMembers();
-
-    // Initialize AI coordination system
-    tribeCoordinator = new TribeCoordinator();
-
-    // Initialize fishing system
-    fishingSystem = new FishingSystem();
-
     updateLoadingProgress(90);
-
+    
     // Setup controls and GUI
     setupControls();
     setupGUI();
@@ -319,8 +312,8 @@ function createWater() {
     const waterGeometry = new THREE.PlaneGeometry(8000, 8000);
     
     water = new Water(waterGeometry, {
-        textureWidth: 512,
-        textureHeight: 512,
+        textureWidth: 1024,
+        textureHeight: 1024,
         waterNormals: new THREE.TextureLoader().load(
             'https://threejs.org/examples/textures/waternormals.jpg',
             (texture) => {
@@ -328,11 +321,11 @@ function createWater() {
             }
         ),
         sunDirection: new THREE.Vector3(0.5, 0.5, 0.5),
-        sunColor: 0xffcc88,
-        waterColor: 0x007080,
-        distortionScale: 2,
+        sunColor: 0xffffff,
+        waterColor: 0x001e3f,
+        distortionScale: 3.7,
         fog: true,
-        alpha: 0.9
+        alpha: 0.85
     });
     
     water.rotation.x = -Math.PI / 2;
@@ -341,19 +334,27 @@ function createWater() {
     
     // Ocean floor
     const floorGeometry = new THREE.PlaneGeometry(4000, 4000);
-    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x0a3040, roughness: 1 });
+    const floorMaterial = new THREE.MeshStandardMaterial({
+        color: 0x0a2530,
+        roughness: 0.9,
+        metalness: 0.1
+    });
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -15;
+    floor.receiveShadow = true;
     scene.add(floor);
-    
+
     // Shallow water ring (reef-like)
     const shallowGeometry = new THREE.RingGeometry(CONFIG.islandRadius * 0.95, CONFIG.islandRadius * 1.4, 64);
-    const shallowMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x40b0a0, 
-        transparent: true, 
-        opacity: 0.3,
-        roughness: 0.8
+    const shallowMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3ac4b8,
+        transparent: true,
+        opacity: 0.4,
+        roughness: 0.6,
+        metalness: 0.2,
+        emissive: 0x0a4a40,
+        emissiveIntensity: 0.2
     });
     const shallow = new THREE.Mesh(shallowGeometry, shallowMaterial);
     shallow.rotation.x = -Math.PI / 2;
@@ -405,9 +406,10 @@ function createIsland() {
     
     const material = new THREE.MeshStandardMaterial({
         vertexColors: true,
-        roughness: 0.85,
+        roughness: 0.95,
         metalness: 0,
-        flatShading: false
+        flatShading: false,
+        envMapIntensity: 0.3
     });
     
     island = new THREE.Mesh(geometry, material);
@@ -490,8 +492,18 @@ function createHut() {
 // PALM TREES
 // ============================================
 function createPalmTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
-    const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+        color: 0x8B4513,
+        roughness: 0.95,
+        metalness: 0.05,
+        envMapIntensity: 0.2
+    });
+    const leafMaterial = new THREE.MeshStandardMaterial({
+        color: 0x228B22,
+        roughness: 0.8,
+        metalness: 0,
+        envMapIntensity: 0.4
+    });
     
     for (let i = 0; i < CONFIG.palmTreeCount; i++) {
         const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.5, CONFIG.islandRadius * 0.85, 2);
@@ -574,7 +586,12 @@ function addCoconutsToTree(tree) {
 // JUNGLE TREES
 // ============================================
 function createJungleTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+        color: 0x4a3520,
+        roughness: 0.95,
+        metalness: 0.05,
+        envMapIntensity: 0.15
+    });
     const canopyColors = [0x1a6b1a, 0x228b22, 0x2d7b2d, 0x1e8b1e];
     
     for (let i = 0; i < CONFIG.jungleTreeCount; i++) {
@@ -611,7 +628,9 @@ function createJungleTree(trunkMaterial, canopyColors) {
         const canopyGeometry = new THREE.SphereGeometry(size, 8, 6);
         const canopyMaterial = new THREE.MeshStandardMaterial({
             color: canopyColors[Math.floor(seededRandom() * canopyColors.length)],
-            roughness: 0.8
+            roughness: 0.85,
+            metalness: 0,
+            envMapIntensity: 0.35
         });
         const canopy = new THREE.Mesh(canopyGeometry, canopyMaterial);
         canopy.position.set(
@@ -662,8 +681,10 @@ function createRock() {
     const gray = 0.5 + seededRandom() * 0.2;
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(gray, gray * 0.95, gray * 0.9),
-        roughness: 0.85,
-        flatShading: true
+        roughness: 0.9,
+        metalness: 0.1,
+        flatShading: true,
+        envMapIntensity: 0.25
     });
     
     const rock = new THREE.Mesh(geometry, material);
@@ -677,7 +698,12 @@ function createRock() {
 // BUSHES
 // ============================================
 function createBushes() {
-    const bushMaterial = new THREE.MeshStandardMaterial({ color: 0x3d6a3d, roughness: 0.9 });
+    const bushMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3d6a3d,
+        roughness: 0.9,
+        metalness: 0,
+        envMapIntensity: 0.3
+    });
     const bushGeometry = new THREE.SphereGeometry(0.6, 8, 6);
     
     for (let i = 0; i < CONFIG.bushCount; i++) {
@@ -918,24 +944,8 @@ function updateTribeMembers(delta) {
             member.restTime = 3 + seededRandom() * 3;
         }
 
-        // === HIGH-LEVEL DECISION (IMPROVED AI) ===
-        // Update tribe coordinator with latest information
-        tribeCoordinator.analyzeTribe(tribeMembers, hut);
-
-        // Create helper object for AI system
-        const aiHelpers = {
-            angleTo,
-            hasFood,
-            canCraftSpear,
-            findNearestPalmWithCoconuts,
-            findNearestJungleTree,
-            findNearestRock,
-            findNearestFish,
-            hasSpear
-        };
-
-        // Use improved AI planning
-        improvedPlanTask(member, tribeMembers, hut, tribeCoordinator, aiHelpers);
+        // === HIGH-LEVEL DECISION ===
+        planOrMaintainTask(member);
 
         // === EXECUTION ===
         executeAgentState(member, delta);
@@ -993,7 +1003,7 @@ function planOrMaintainTask(member) {
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
         member.targetAngle = angleTo(member.mesh.position, hut.position);
-        CarryingSystem.updateCarryVisual(member);
+        ensureCarryVisual(member);
         return;
     }
 
@@ -1044,37 +1054,20 @@ function executeAgentState(member, delta) {
                 member.state = 'idle';
                 member.task = null;
             }
-            // Use improved resting animation
-            member.walkPhase += delta * 2;
-            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            AnimationSystem.animateResting(member, delta, member.walkPhase);
+            idleBob(member, delta);
             break;
 
         case 'eating':
-            // Eating animation over time
-            if (!member.actionTimer || member.actionTimer === 0) {
-                member.actionTimer = 2.0; // 2 seconds to eat
-            }
-
-            member.walkPhase += delta * 5;
-            AnimationSystem.animateEating(member, delta, member.walkPhase);
-
-            member.actionTimer -= delta;
-            if (member.actionTimer <= 0) {
-                handleEating(member);
-                member.state = 'idle';
-                member.task = null;
-                CarryingSystem.clearCarryVisual(member);
-            }
+            handleEating(member);
+            member.state = 'idle';
+            member.task = null;
+            clearCarryVisual(member);
             break;
 
         case 'walking':
         case 'hauling':
-            updateWalking(member, delta);
-            break;
-
         case 'fishing':
-            updateFishing(member, delta);
+            updateWalking(member, delta);
             break;
 
         case 'gathering':
@@ -1086,10 +1079,11 @@ function executeAgentState(member, delta) {
             break;
 
         default:
-            // Use improved idle animation (NO random wandering)
-            member.walkPhase += delta * 2;
-            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            AnimationSystem.animateIdle(member, delta, member.walkPhase);
+            idleBob(member, delta);
+            // Small chance to shift body angle while idle
+            if (seededRandom() < 0.02) {
+                member.targetAngle += (seededRandom() - 0.5) * 0.4;
+            }
     }
 }
 
@@ -1109,32 +1103,26 @@ function updateWalking(member, delta) {
     const speed = CONFIG.walkSpeed * delta;
 
     member.walkPhase += delta * CONFIG.walkSpeed * 5;
+    const legSwing = Math.sin(member.walkPhase) * 0.4;
+    const armSwing = Math.sin(member.walkPhase + Math.PI) * 0.25;
 
-    // Use improved carrying animations if hauling
-    if (member.state === 'hauling') {
-        // Determine what is being carried
-        const carryingCoconuts = member.inventory.slots.has('coconut');
-        const carryingWood = member.inventory.slots.has('wood');
-        const carryingStone = member.inventory.slots.has('stone');
+    member.leftLeg.rotation.x = legSwing;
+    member.rightLeg.rotation.x = -legSwing;
 
-        if (carryingStone) {
-            AnimationSystem.animateCarryingStone(member, delta);
-        } else if (carryingWood) {
-            AnimationSystem.animateCarryingWood(member, delta);
-        } else if (carryingCoconuts) {
-            const count = getInventoryCount(member.inventory, 'coconut');
-            AnimationSystem.animateCarryingCoconuts(member, delta, count);
-        }
+    // If hauling, keep arms more forward to "carry"
+    if (member.state === 'hauling' && member.carryMesh) {
+        member.leftArm.rotation.x = -0.4;
+        member.rightArm.rotation.x = -0.4;
     } else {
-        // Normal walking animation
-        AnimationSystem.animateWalking(member, delta, CONFIG.walkSpeed);
+        member.leftArm.rotation.x = -armSwing;
+        member.rightArm.rotation.x = armSwing;
     }
 
     const targetPos = resolveTaskTargetPosition(member);
     if (!targetPos) {
         member.state = 'idle';
         member.task = null;
-        CarryingSystem.clearCarryVisual(member);
+        clearCarryVisual(member);
         return;
     }
 
@@ -1173,16 +1161,11 @@ function updateGathering(member, delta) {
         return;
     }
 
-    // Use improved animations based on resource type
+    // "Punch" animation
     member.walkPhase += delta * 10;
-
-    if (task.resourceId === 'coconut') {
-        AnimationSystem.animateCoconutGathering(member, delta, member.walkPhase);
-    } else if (task.resourceId === 'wood') {
-        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
-    } else if (task.resourceId === 'stone') {
-        AnimationSystem.animateStoneGathering(member, delta, member.walkPhase);
-    }
+    const punch = Math.sin(member.walkPhase) * 0.8;
+    member.rightArm.rotation.x = -0.6 - punch * 0.4;
+    member.leftArm.rotation.x = 0.2 + punch * 0.2;
 
     const baseResource = RESOURCES[task.resourceId?.toUpperCase()] || RESOURCES[task.resourceId];
     const baseTime = baseResource?.gatherTime || 1.0;
@@ -1203,7 +1186,7 @@ function updateGathering(member, delta) {
         // Inventory full -> haul
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        CarryingSystem.updateCarryVisual(member);
+        ensureCarryVisual(member);
         return;
     }
 
@@ -1224,89 +1207,12 @@ function updateGathering(member, delta) {
     awardXP(member.skills, task.resourceId === 'coconut' ? 'gather_coconut' :
         (task.resourceId === 'wood' ? 'gather_wood' : 'gather_stone'), []);
 
-    CarryingSystem.updateCarryVisual(member);
+    ensureCarryVisual(member);
 
     // After gather, immediately haul to hut
     member.state = 'hauling';
     member.task = { type: 'haul_to_hut' };
     member.actionTimer = 0;
-}
-
-function updateFishing(member, delta) {
-    const task = member.task;
-    if (!task || task.type !== 'go_fishing' || !task.target) {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Check if should cancel fishing (too dangerous)
-    if (FishingSystem.shouldCancelFishing(member, CONFIG.waterLevel)) {
-        member.state = 'idle';
-        member.task = null;
-        fishingSystem.releaseFish(task.target, member.id);
-        return;
-    }
-
-    // Spearfishing animation
-    member.fishingPhase = (member.fishingPhase || 0) + delta * 3;
-    const hasSpear = FishingSystem.hasSpear(member.inventory);
-    AnimationSystem.animateFishing(member, delta, member.fishingPhase, hasSpear);
-
-    // Check if fish moved out of range
-    const fishPos = task.target.mesh.position;
-    const inRange = FishingSystem.isInStrikingRange(member.mesh.position, fishPos);
-
-    if (!inRange) {
-        // Fish escaped, replan
-        member.state = 'idle';
-        member.task = null;
-        fishingSystem.releaseFish(task.target, member.id);
-        return;
-    }
-
-    // Face the fish
-    member.targetAngle = angleTo(member.mesh.position, fishPos);
-    const angleDiff = member.targetAngle - member.mesh.rotation.y;
-    member.mesh.rotation.y += angleDiff * delta * 5;
-
-    // Fishing takes time - attempt every 3-5 seconds
-    const fishingTime = 4.0;
-    if (member.actionTimer <= 0) {
-        member.actionTimer = fishingTime;
-    }
-
-    member.actionTimer -= delta;
-    if (member.actionTimer > 0) return;
-
-    // Attempt to catch fish
-    const success = FishingSystem.attemptCatch(member, task.target, fishingSystem);
-
-    if (success) {
-        // Caught fish!
-        FishingSystem.addFishToInventory(member.inventory);
-        FishingSystem.removeFish(task.target, fishList, scene);
-        fishingSystem.releaseFish(task.target, member.id);
-
-        // Award XP
-        awardXP(member.skills, 'fishing', []);
-
-        // Consume energy
-        member.needs.energy = Math.max(0, member.needs.energy - 0.15);
-
-        // Update carry visual
-        CarryingSystem.updateCarryVisual(member);
-
-        // Return to shore and haul to hut
-        member.state = 'hauling';
-        member.task = { type: 'haul_to_hut' };
-        member.actionTimer = 0;
-
-        logTest(`Agent ${member.id} caught a fish!`, 'success');
-    } else {
-        // Failed attempt, try again
-        member.actionTimer = fishingTime;
-    }
 }
 
 function updateCrafting(member, delta) {
@@ -1318,10 +1224,10 @@ function updateCrafting(member, delta) {
     }
 
     member.actionTimer -= delta;
-
-    // Use improved crafting animation
+    // Subtle crafting sway
     member.walkPhase += delta * 4;
-    AnimationSystem.animateCrafting(member, delta, member.walkPhase);
+    member.rightArm.rotation.x = -0.4 + Math.sin(member.walkPhase) * 0.2;
+    member.leftArm.rotation.x = -0.2 - Math.sin(member.walkPhase) * 0.1;
 
     if (member.actionTimer > 0) return;
 
@@ -1338,9 +1244,6 @@ function updateCrafting(member, delta) {
     addTool(member.inventory, 'fishing_spear');
     equipTool(member.inventory, 'fishing_spear');
 
-    // Visually attach spear
-    CarryingSystem.attachSpear(member);
-
     awardXP(member.skills, 'craft_tool', []);
 
     member.state = 'idle';
@@ -1351,34 +1254,16 @@ function resolveTaskTargetPosition(member) {
     const task = member.task;
     if (!task) return null;
 
-    // Tasks that go to hut
-    if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food' ||
-        task.type === 'patrol_to_hut' || task.type === 'go_hut_for_helping') {
+    if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food') {
         return hut ? hut.position : null;
     }
 
-    // Gathering tasks
     if ((task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone') && task.target) {
         return task.target.position;
     }
 
-    // Fishing task - wade to fishing spot near fish
-    if (task.type === 'go_fishing' && task.target) {
-        const fishPos = task.target.mesh.position;
-        const waterLevel = CONFIG.waterLevel;
-        return FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel);
-    }
-
-    // Helping another agent
-    if (task.type === 'help_agent' && task.targetAgent) {
-        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
-        if (targetMember && targetMember.alive) {
-            return targetMember.mesh.position;
-        }
-    }
-
-    // Fishing
     if (task.type === 'go_fishing_spot') {
+        // simple shoreline point
         const angle = Math.atan2(member.mesh.position.x, member.mesh.position.z);
         const dist = CONFIG.islandRadius * 1.1;
         return new THREE.Vector3(
@@ -1410,7 +1295,7 @@ function onDestinationReached(member) {
             hut.storage[resourceId] += amount;
         });
 
-        CarryingSystem.clearCarryVisual(member);
+        clearCarryVisual(member);
         member.state = 'idle';
         member.task = null;
         return;
@@ -1432,60 +1317,9 @@ function onDestinationReached(member) {
         return;
     }
 
-    if (task.type === 'go_fishing' && task.target) {
-        // Check if fish is still nearby and in striking range
-        if (FishingSystem.isInStrikingRange(member.mesh.position, task.target.mesh.position)) {
-            member.state = 'fishing';
-            member.actionTimer = 0;
-            member.fishingPhase = 0; // For animation
-            return;
-        } else {
-            // Fish moved away, replan
-            member.state = 'idle';
-            member.task = null;
-            return;
-        }
-    }
-
     if (task.type === 'go_fishing_spot') {
         member.state = 'fishing';
         member.actionTimer = 3 + seededRandom() * 3;
-        return;
-    }
-
-    // Patrol to hut - just arrive and go idle (ready for new tasks)
-    if (task.type === 'patrol_to_hut') {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Go to hut to get food for helping
-    if (task.type === 'go_hut_for_helping' && hut && hut.storage.coconut > tribeMembers.length) {
-        // Take a coconut to give to someone in need
-        const take = Math.min(2, hut.storage.coconut - tribeMembers.length);
-        if (take > 0) {
-            hut.storage.coconut -= take;
-            addToInventory(member.inventory, 'coconut', take);
-            CarryingSystem.updateCarryVisual(member);
-        }
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Help agent - give them food
-    if (task.type === 'help_agent') {
-        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
-        if (targetMember && targetMember.alive && hasFood(member.inventory)) {
-            // Transfer food to the needy agent
-            removeFromInventory(member.inventory, 'coconut', 1);
-            addToInventory(targetMember.inventory, 'coconut', 1);
-            logTest(`Agent ${member.id} helped ${targetMember.id} with food`, 'success');
-        }
-        CarryingSystem.clearCarryVisual(member);
-        member.state = 'idle';
-        member.task = null;
         return;
     }
 
@@ -1521,7 +1355,7 @@ function handleEating(member) {
         // Carry leftovers back to hut
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        CarryingSystem.updateCarryVisual(member);
+        ensureCarryVisual(member);
     }
 }
 
@@ -1539,17 +1373,12 @@ function normalizeAngle(a) {
     return a;
 }
 
-function findNearestPalmWithCoconuts(member, coordinator) {
+function findNearestPalmWithCoconuts(member) {
     let nearest = null;
     let nearestDist = Infinity;
 
     allTrees.forEach(treeData => {
         if (treeData.mesh.userData.treeType === 'palm' && treeData.mesh.userData.coconuts > 0) {
-            // Skip if already claimed by another agent
-            if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
-                return;
-            }
-
             const dist = treeData.mesh.position.distanceTo(member.mesh.position);
             if (dist < nearestDist) {
                 nearestDist = dist;
@@ -1614,66 +1443,6 @@ function hutAsInventory() {
     };
 }
 
-// Additional helper functions for improved AI
-function findNearestJungleTree(member, coordinator) {
-    let nearest = null;
-    let nearestDist = Infinity;
-
-    allTrees.forEach(treeData => {
-        // Skip if already claimed by another agent
-        if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
-            return;
-        }
-
-        const dist = treeData.mesh.position.distanceTo(member.mesh.position);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = treeData.mesh;
-        }
-    });
-
-    return nearest;
-}
-
-function findNearestRock(member, coordinator) {
-    let nearest = null;
-    let nearestDist = Infinity;
-
-    allRocks.forEach(rock => {
-        // Skip if already claimed by another agent
-        if (coordinator && coordinator.isResourceClaimed(rock, member.id)) {
-            return;
-        }
-
-        const dist = rock.position.distanceTo(member.mesh.position);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = rock;
-        }
-    });
-
-    return nearest;
-}
-
-function findNearestFish(member) {
-    // Use FishingSystem to find fish, checking claims
-    return FishingSystem.findNearestFish(member, fishList, fishingSystem);
-}
-
-function hasSpear(member) {
-    return FishingSystem.hasSpear(member.inventory);
-}
-
-function hasFood(inventory) {
-    return getInventoryCount(inventory, 'coconut') > 0 ||
-           getInventoryCount(inventory, 'fish') > 0;
-}
-
-function canCraftSpear(hut) {
-    if (!hut) return false;
-    return canCraft(hutAsInventory(), 'fishing_spear');
-}
-
 function getTotalSpearsInTribeAndHut() {
     let total = hut ? (hut.storage.fishing_spear || 0) : 0;
     tribeMembers.forEach(m => {
@@ -1689,33 +1458,102 @@ function getTotalSpearsInTribeAndHut() {
 // FISH UPDATE
 // ============================================
 function updateFish(delta) {
-    // Update fish fleeing behavior
     fishList.forEach(fish => {
-        // Check for nearby agents and flee
-        FishingSystem.updateFishFleeing(fish, tribeMembers, delta, FISHING_CONFIG.FLEE_DISTANCE);
-
-        // Normal swimming behavior
         fish.angle += delta * fish.speed * 0.3;
         fish.mesh.position.x = Math.cos(fish.angle) * fish.dist;
         fish.mesh.position.z = Math.sin(fish.angle) * fish.dist;
         fish.mesh.position.y = fish.yBase + Math.sin(clock.elapsedTime * 2 + fish.angle) * 0.25;
         fish.mesh.rotation.y = fish.angle + Math.PI / 2;
     });
+}
 
-    // Spawn new fish occasionally to maintain population
-    if (seededRandom() < 0.01 * delta) { // Small chance per frame
-        FishingSystem.spawnFish(
-            scene,
-            fishList,
-            CONFIG.islandRadius,
-            CONFIG.waterLevel,
-            createSingleFish,
-            CONFIG.fishCount
+// ============================================
+// AMBIENT PARTICLES (BUTTERFLIES)
+// ============================================
+function createParticles() {
+    const butterflyColors = [0xffaa00, 0xff6600, 0xffdd00, 0xff88ff, 0x66ddff];
+
+    for (let i = 0; i < 25; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = seededRandom() * CONFIG.islandRadius * 0.8;
+        const height = 2 + seededRandom() * 8;
+
+        const butterflyGroup = new THREE.Group();
+
+        // Two wings
+        const wingGeometry = new THREE.CircleGeometry(0.15, 6);
+        const wingColor = butterflyColors[Math.floor(seededRandom() * butterflyColors.length)];
+        const wingMaterial = new THREE.MeshStandardMaterial({
+            color: wingColor,
+            side: THREE.DoubleSide,
+            emissive: wingColor,
+            emissiveIntensity: 0.3,
+            metalness: 0.2,
+            roughness: 0.7
+        });
+
+        const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        leftWing.position.set(-0.1, 0, 0);
+        leftWing.rotation.y = Math.PI / 4;
+        butterflyGroup.add(leftWing);
+
+        const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        rightWing.position.set(0.1, 0, 0);
+        rightWing.rotation.y = -Math.PI / 4;
+        butterflyGroup.add(rightWing);
+
+        // Body
+        const bodyGeometry = new THREE.CapsuleGeometry(0.02, 0.2, 3, 6);
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            color: 0x222222,
+            roughness: 0.8
+        });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.rotation.x = Math.PI / 2;
+        butterflyGroup.add(body);
+
+        butterflyGroup.position.set(
+            Math.cos(angle) * dist,
+            height,
+            Math.sin(angle) * dist
         );
-    }
 
-    // Clean up fishing system claims
-    fishingSystem.cleanupClaims(tribeMembers);
+        scene.add(butterflyGroup);
+
+        particles.push({
+            mesh: butterflyGroup,
+            leftWing,
+            rightWing,
+            baseHeight: height,
+            phase: seededRandom() * Math.PI * 2,
+            speed: 0.5 + seededRandom() * 1.5,
+            orbitRadius: dist,
+            orbitAngle: angle
+        });
+    }
+}
+
+function updateParticles(delta) {
+    particles.forEach((particle) => {
+        // Flap wings
+        particle.phase += delta * 15;
+        const flap = Math.sin(particle.phase) * 0.5 + 0.5;
+        particle.leftWing.rotation.y = Math.PI / 4 + flap * 0.6;
+        particle.rightWing.rotation.y = -Math.PI / 4 - flap * 0.6;
+
+        // Float and drift
+        particle.orbitAngle += delta * particle.speed * 0.15;
+        const bobHeight = Math.sin(particle.phase * 0.5) * 0.5;
+        const wanderX = Math.sin(particle.phase * 0.3) * 2;
+        const wanderZ = Math.cos(particle.phase * 0.4) * 2;
+
+        particle.mesh.position.x = Math.cos(particle.orbitAngle) * particle.orbitRadius + wanderX;
+        particle.mesh.position.z = Math.sin(particle.orbitAngle) * particle.orbitRadius + wanderZ;
+        particle.mesh.position.y = particle.baseHeight + bobHeight;
+
+        // Face movement direction
+        particle.mesh.rotation.y = particle.orbitAngle + Math.PI / 2;
+    });
 }
 
 // ============================================
@@ -1930,7 +1768,7 @@ function animate() {
     });
     
     // Render
-    renderer.render(scene, camera);
+    composer.render();
 }
 
 function stepSimulation(delta) {
@@ -1943,13 +1781,45 @@ function updateVisuals(delta) {
     if (water) {
         water.material.uniforms['time'].value += delta * 0.4;
     }
-    
+
+    // Wind animation
+    windTime += delta;
+    const windStrength = 0.05;
+    const windSpeed = 1.2;
+
+    // Animate palm trees
+    allTrees.forEach((treeData) => {
+        if (treeData.mesh.userData.treeType === 'palm') {
+            const tree = treeData.mesh;
+            const offset = tree.position.x + tree.position.z;
+            const sway = Math.sin(windTime * windSpeed + offset) * windStrength;
+            tree.rotation.z = sway;
+            tree.rotation.x = Math.cos(windTime * windSpeed * 0.7 + offset) * windStrength * 0.5;
+        } else if (treeData.mesh.userData.treeType === 'jungle') {
+            const tree = treeData.mesh;
+            const offset = tree.position.x + tree.position.z;
+            const sway = Math.sin(windTime * windSpeed * 0.8 + offset) * windStrength * 0.6;
+            tree.rotation.z = sway;
+        }
+    });
+
+    // Animate bushes
+    allBushes.forEach((bush) => {
+        const offset = bush.position.x + bush.position.z;
+        const sway = Math.sin(windTime * windSpeed * 1.5 + offset) * windStrength * 0.8;
+        bush.rotation.z = sway;
+        bush.rotation.x = Math.cos(windTime * windSpeed * 1.3 + offset) * windStrength * 0.6;
+    });
+
     // Camera
     updateCamera(delta);
-    
+
     // Fish
     updateFish(delta);
-    
+
+    // Particles
+    updateParticles(delta);
+
     // Time of day auto-play
     if (CONFIG.autoPlayTime) {
         CONFIG.timeOfDay += delta * 0.015;
@@ -1965,6 +1835,7 @@ function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // ============================================
