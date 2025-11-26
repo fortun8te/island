@@ -33,12 +33,29 @@ import {
     updateNeeds,
     consumeFood as applyFoodToNeeds
 } from './systems/needs.js';
-import { 
+import {
     createAgentSkills,
     getGatheringSpeed,
     getGatheringYield,
     awardXP
 } from './systems/skills.js';
+import {
+    TribeCoordinator,
+    improvedPlanTask,
+    improvedIdleBehavior
+} from './systems/ai.js';
+import {
+    AnimationSystem,
+    ANIM_STATES
+} from './systems/animations.js';
+import {
+    CarryingSystem
+} from './systems/carrying.js';
+import {
+    FishingSystem,
+    FISHING_TASKS,
+    FISHING_CONFIG
+} from './systems/fishing.js';
 
 // ============================================
 // GLOBAL STATE
@@ -52,6 +69,8 @@ let allRocks = [];
 let allBushes = [];
 let tribeMembers = [];
 let fishList = [];
+let tribeCoordinator; // AI coordination system
+let fishingSystem; // Fishing mechanics system
 
 // Camera state
 let cameraYaw = 0, cameraPitch = 0;
@@ -130,8 +149,15 @@ async function init() {
     
     createFish();
     createTribeMembers();
+
+    // Initialize AI coordination system
+    tribeCoordinator = new TribeCoordinator();
+
+    // Initialize fishing system
+    fishingSystem = new FishingSystem();
+
     updateLoadingProgress(90);
-    
+
     // Setup controls and GUI
     setupControls();
     setupGUI();
@@ -892,8 +918,24 @@ function updateTribeMembers(delta) {
             member.restTime = 3 + seededRandom() * 3;
         }
 
-        // === HIGH-LEVEL DECISION ===
-        planOrMaintainTask(member);
+        // === HIGH-LEVEL DECISION (IMPROVED AI) ===
+        // Update tribe coordinator with latest information
+        tribeCoordinator.analyzeTribe(tribeMembers, hut);
+
+        // Create helper object for AI system
+        const aiHelpers = {
+            angleTo,
+            hasFood,
+            canCraftSpear,
+            findNearestPalmWithCoconuts,
+            findNearestJungleTree,
+            findNearestRock,
+            findNearestFish,
+            hasSpear
+        };
+
+        // Use improved AI planning
+        improvedPlanTask(member, tribeMembers, hut, tribeCoordinator, aiHelpers);
 
         // === EXECUTION ===
         executeAgentState(member, delta);
@@ -951,7 +993,7 @@ function planOrMaintainTask(member) {
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
         member.targetAngle = angleTo(member.mesh.position, hut.position);
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
         return;
     }
 
@@ -1002,20 +1044,37 @@ function executeAgentState(member, delta) {
                 member.state = 'idle';
                 member.task = null;
             }
-            idleBob(member, delta);
+            // Use improved resting animation
+            member.walkPhase += delta * 2;
+            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
+            AnimationSystem.animateResting(member, delta, member.walkPhase);
             break;
 
         case 'eating':
-            handleEating(member);
-            member.state = 'idle';
-            member.task = null;
-            clearCarryVisual(member);
+            // Eating animation over time
+            if (!member.actionTimer || member.actionTimer === 0) {
+                member.actionTimer = 2.0; // 2 seconds to eat
+            }
+
+            member.walkPhase += delta * 5;
+            AnimationSystem.animateEating(member, delta, member.walkPhase);
+
+            member.actionTimer -= delta;
+            if (member.actionTimer <= 0) {
+                handleEating(member);
+                member.state = 'idle';
+                member.task = null;
+                CarryingSystem.clearCarryVisual(member);
+            }
             break;
 
         case 'walking':
         case 'hauling':
-        case 'fishing':
             updateWalking(member, delta);
+            break;
+
+        case 'fishing':
+            updateFishing(member, delta);
             break;
 
         case 'gathering':
@@ -1027,11 +1086,10 @@ function executeAgentState(member, delta) {
             break;
 
         default:
-            idleBob(member, delta);
-            // Small chance to shift body angle while idle
-            if (seededRandom() < 0.02) {
-                member.targetAngle += (seededRandom() - 0.5) * 0.4;
-            }
+            // Use improved idle animation (NO random wandering)
+            member.walkPhase += delta * 2;
+            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
+            AnimationSystem.animateIdle(member, delta, member.walkPhase);
     }
 }
 
@@ -1051,26 +1109,32 @@ function updateWalking(member, delta) {
     const speed = CONFIG.walkSpeed * delta;
 
     member.walkPhase += delta * CONFIG.walkSpeed * 5;
-    const legSwing = Math.sin(member.walkPhase) * 0.4;
-    const armSwing = Math.sin(member.walkPhase + Math.PI) * 0.25;
 
-    member.leftLeg.rotation.x = legSwing;
-    member.rightLeg.rotation.x = -legSwing;
+    // Use improved carrying animations if hauling
+    if (member.state === 'hauling') {
+        // Determine what is being carried
+        const carryingCoconuts = member.inventory.slots.has('coconut');
+        const carryingWood = member.inventory.slots.has('wood');
+        const carryingStone = member.inventory.slots.has('stone');
 
-    // If hauling, keep arms more forward to "carry"
-    if (member.state === 'hauling' && member.carryMesh) {
-        member.leftArm.rotation.x = -0.4;
-        member.rightArm.rotation.x = -0.4;
+        if (carryingStone) {
+            AnimationSystem.animateCarryingStone(member, delta);
+        } else if (carryingWood) {
+            AnimationSystem.animateCarryingWood(member, delta);
+        } else if (carryingCoconuts) {
+            const count = getInventoryCount(member.inventory, 'coconut');
+            AnimationSystem.animateCarryingCoconuts(member, delta, count);
+        }
     } else {
-        member.leftArm.rotation.x = -armSwing;
-        member.rightArm.rotation.x = armSwing;
+        // Normal walking animation
+        AnimationSystem.animateWalking(member, delta, CONFIG.walkSpeed);
     }
 
     const targetPos = resolveTaskTargetPosition(member);
     if (!targetPos) {
         member.state = 'idle';
         member.task = null;
-        clearCarryVisual(member);
+        CarryingSystem.clearCarryVisual(member);
         return;
     }
 
@@ -1109,11 +1173,16 @@ function updateGathering(member, delta) {
         return;
     }
 
-    // "Punch" animation
+    // Use improved animations based on resource type
     member.walkPhase += delta * 10;
-    const punch = Math.sin(member.walkPhase) * 0.8;
-    member.rightArm.rotation.x = -0.6 - punch * 0.4;
-    member.leftArm.rotation.x = 0.2 + punch * 0.2;
+
+    if (task.resourceId === 'coconut') {
+        AnimationSystem.animateCoconutGathering(member, delta, member.walkPhase);
+    } else if (task.resourceId === 'wood') {
+        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
+    } else if (task.resourceId === 'stone') {
+        AnimationSystem.animateStoneGathering(member, delta, member.walkPhase);
+    }
 
     const baseResource = RESOURCES[task.resourceId?.toUpperCase()] || RESOURCES[task.resourceId];
     const baseTime = baseResource?.gatherTime || 1.0;
@@ -1134,7 +1203,7 @@ function updateGathering(member, delta) {
         // Inventory full -> haul
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
         return;
     }
 
@@ -1155,12 +1224,89 @@ function updateGathering(member, delta) {
     awardXP(member.skills, task.resourceId === 'coconut' ? 'gather_coconut' :
         (task.resourceId === 'wood' ? 'gather_wood' : 'gather_stone'), []);
 
-    ensureCarryVisual(member);
+    CarryingSystem.updateCarryVisual(member);
 
     // After gather, immediately haul to hut
     member.state = 'hauling';
     member.task = { type: 'haul_to_hut' };
     member.actionTimer = 0;
+}
+
+function updateFishing(member, delta) {
+    const task = member.task;
+    if (!task || task.type !== 'go_fishing' || !task.target) {
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+
+    // Check if should cancel fishing (too dangerous)
+    if (FishingSystem.shouldCancelFishing(member, CONFIG.waterLevel)) {
+        member.state = 'idle';
+        member.task = null;
+        fishingSystem.releaseFish(task.target, member.id);
+        return;
+    }
+
+    // Spearfishing animation
+    member.fishingPhase = (member.fishingPhase || 0) + delta * 3;
+    const hasSpear = FishingSystem.hasSpear(member.inventory);
+    AnimationSystem.animateFishing(member, delta, member.fishingPhase, hasSpear);
+
+    // Check if fish moved out of range
+    const fishPos = task.target.mesh.position;
+    const inRange = FishingSystem.isInStrikingRange(member.mesh.position, fishPos);
+
+    if (!inRange) {
+        // Fish escaped, replan
+        member.state = 'idle';
+        member.task = null;
+        fishingSystem.releaseFish(task.target, member.id);
+        return;
+    }
+
+    // Face the fish
+    member.targetAngle = angleTo(member.mesh.position, fishPos);
+    const angleDiff = member.targetAngle - member.mesh.rotation.y;
+    member.mesh.rotation.y += angleDiff * delta * 5;
+
+    // Fishing takes time - attempt every 3-5 seconds
+    const fishingTime = 4.0;
+    if (member.actionTimer <= 0) {
+        member.actionTimer = fishingTime;
+    }
+
+    member.actionTimer -= delta;
+    if (member.actionTimer > 0) return;
+
+    // Attempt to catch fish
+    const success = FishingSystem.attemptCatch(member, task.target, fishingSystem);
+
+    if (success) {
+        // Caught fish!
+        FishingSystem.addFishToInventory(member.inventory);
+        FishingSystem.removeFish(task.target, fishList, scene);
+        fishingSystem.releaseFish(task.target, member.id);
+
+        // Award XP
+        awardXP(member.skills, 'fishing', []);
+
+        // Consume energy
+        member.needs.energy = Math.max(0, member.needs.energy - 0.15);
+
+        // Update carry visual
+        CarryingSystem.updateCarryVisual(member);
+
+        // Return to shore and haul to hut
+        member.state = 'hauling';
+        member.task = { type: 'haul_to_hut' };
+        member.actionTimer = 0;
+
+        logTest(`Agent ${member.id} caught a fish!`, 'success');
+    } else {
+        // Failed attempt, try again
+        member.actionTimer = fishingTime;
+    }
 }
 
 function updateCrafting(member, delta) {
@@ -1172,10 +1318,10 @@ function updateCrafting(member, delta) {
     }
 
     member.actionTimer -= delta;
-    // Subtle crafting sway
+
+    // Use improved crafting animation
     member.walkPhase += delta * 4;
-    member.rightArm.rotation.x = -0.4 + Math.sin(member.walkPhase) * 0.2;
-    member.leftArm.rotation.x = -0.2 - Math.sin(member.walkPhase) * 0.1;
+    AnimationSystem.animateCrafting(member, delta, member.walkPhase);
 
     if (member.actionTimer > 0) return;
 
@@ -1192,6 +1338,9 @@ function updateCrafting(member, delta) {
     addTool(member.inventory, 'fishing_spear');
     equipTool(member.inventory, 'fishing_spear');
 
+    // Visually attach spear
+    CarryingSystem.attachSpear(member);
+
     awardXP(member.skills, 'craft_tool', []);
 
     member.state = 'idle';
@@ -1202,16 +1351,34 @@ function resolveTaskTargetPosition(member) {
     const task = member.task;
     if (!task) return null;
 
-    if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food') {
+    // Tasks that go to hut
+    if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food' ||
+        task.type === 'patrol_to_hut' || task.type === 'go_hut_for_helping') {
         return hut ? hut.position : null;
     }
 
+    // Gathering tasks
     if ((task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone') && task.target) {
         return task.target.position;
     }
 
+    // Fishing task - wade to fishing spot near fish
+    if (task.type === 'go_fishing' && task.target) {
+        const fishPos = task.target.mesh.position;
+        const waterLevel = CONFIG.waterLevel;
+        return FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel);
+    }
+
+    // Helping another agent
+    if (task.type === 'help_agent' && task.targetAgent) {
+        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
+        if (targetMember && targetMember.alive) {
+            return targetMember.mesh.position;
+        }
+    }
+
+    // Fishing
     if (task.type === 'go_fishing_spot') {
-        // simple shoreline point
         const angle = Math.atan2(member.mesh.position.x, member.mesh.position.z);
         const dist = CONFIG.islandRadius * 1.1;
         return new THREE.Vector3(
@@ -1243,7 +1410,7 @@ function onDestinationReached(member) {
             hut.storage[resourceId] += amount;
         });
 
-        clearCarryVisual(member);
+        CarryingSystem.clearCarryVisual(member);
         member.state = 'idle';
         member.task = null;
         return;
@@ -1265,9 +1432,60 @@ function onDestinationReached(member) {
         return;
     }
 
+    if (task.type === 'go_fishing' && task.target) {
+        // Check if fish is still nearby and in striking range
+        if (FishingSystem.isInStrikingRange(member.mesh.position, task.target.mesh.position)) {
+            member.state = 'fishing';
+            member.actionTimer = 0;
+            member.fishingPhase = 0; // For animation
+            return;
+        } else {
+            // Fish moved away, replan
+            member.state = 'idle';
+            member.task = null;
+            return;
+        }
+    }
+
     if (task.type === 'go_fishing_spot') {
         member.state = 'fishing';
         member.actionTimer = 3 + seededRandom() * 3;
+        return;
+    }
+
+    // Patrol to hut - just arrive and go idle (ready for new tasks)
+    if (task.type === 'patrol_to_hut') {
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+
+    // Go to hut to get food for helping
+    if (task.type === 'go_hut_for_helping' && hut && hut.storage.coconut > tribeMembers.length) {
+        // Take a coconut to give to someone in need
+        const take = Math.min(2, hut.storage.coconut - tribeMembers.length);
+        if (take > 0) {
+            hut.storage.coconut -= take;
+            addToInventory(member.inventory, 'coconut', take);
+            CarryingSystem.updateCarryVisual(member);
+        }
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+
+    // Help agent - give them food
+    if (task.type === 'help_agent') {
+        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
+        if (targetMember && targetMember.alive && hasFood(member.inventory)) {
+            // Transfer food to the needy agent
+            removeFromInventory(member.inventory, 'coconut', 1);
+            addToInventory(targetMember.inventory, 'coconut', 1);
+            logTest(`Agent ${member.id} helped ${targetMember.id} with food`, 'success');
+        }
+        CarryingSystem.clearCarryVisual(member);
+        member.state = 'idle';
+        member.task = null;
         return;
     }
 
@@ -1303,7 +1521,7 @@ function handleEating(member) {
         // Carry leftovers back to hut
         member.state = 'hauling';
         member.task = { type: 'haul_to_hut' };
-        ensureCarryVisual(member);
+        CarryingSystem.updateCarryVisual(member);
     }
 }
 
@@ -1321,12 +1539,17 @@ function normalizeAngle(a) {
     return a;
 }
 
-function findNearestPalmWithCoconuts(member) {
+function findNearestPalmWithCoconuts(member, coordinator) {
     let nearest = null;
     let nearestDist = Infinity;
 
     allTrees.forEach(treeData => {
         if (treeData.mesh.userData.treeType === 'palm' && treeData.mesh.userData.coconuts > 0) {
+            // Skip if already claimed by another agent
+            if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+                return;
+            }
+
             const dist = treeData.mesh.position.distanceTo(member.mesh.position);
             if (dist < nearestDist) {
                 nearestDist = dist;
@@ -1391,6 +1614,66 @@ function hutAsInventory() {
     };
 }
 
+// Additional helper functions for improved AI
+function findNearestJungleTree(member, coordinator) {
+    let nearest = null;
+    let nearestDist = Infinity;
+
+    allTrees.forEach(treeData => {
+        // Skip if already claimed by another agent
+        if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+            return;
+        }
+
+        const dist = treeData.mesh.position.distanceTo(member.mesh.position);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = treeData.mesh;
+        }
+    });
+
+    return nearest;
+}
+
+function findNearestRock(member, coordinator) {
+    let nearest = null;
+    let nearestDist = Infinity;
+
+    allRocks.forEach(rock => {
+        // Skip if already claimed by another agent
+        if (coordinator && coordinator.isResourceClaimed(rock, member.id)) {
+            return;
+        }
+
+        const dist = rock.position.distanceTo(member.mesh.position);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = rock;
+        }
+    });
+
+    return nearest;
+}
+
+function findNearestFish(member) {
+    // Use FishingSystem to find fish, checking claims
+    return FishingSystem.findNearestFish(member, fishList, fishingSystem);
+}
+
+function hasSpear(member) {
+    return FishingSystem.hasSpear(member.inventory);
+}
+
+function hasFood(inventory) {
+    return getInventoryCount(inventory, 'coconut') > 0 ||
+           getInventoryCount(inventory, 'fish') > 0;
+}
+
+function canCraftSpear(hut) {
+    if (!hut) return false;
+    return canCraft(hutAsInventory(), 'fishing_spear');
+}
+
 function getTotalSpearsInTribeAndHut() {
     let total = hut ? (hut.storage.fishing_spear || 0) : 0;
     tribeMembers.forEach(m => {
@@ -1406,13 +1689,33 @@ function getTotalSpearsInTribeAndHut() {
 // FISH UPDATE
 // ============================================
 function updateFish(delta) {
+    // Update fish fleeing behavior
     fishList.forEach(fish => {
+        // Check for nearby agents and flee
+        FishingSystem.updateFishFleeing(fish, tribeMembers, delta, FISHING_CONFIG.FLEE_DISTANCE);
+
+        // Normal swimming behavior
         fish.angle += delta * fish.speed * 0.3;
         fish.mesh.position.x = Math.cos(fish.angle) * fish.dist;
         fish.mesh.position.z = Math.sin(fish.angle) * fish.dist;
         fish.mesh.position.y = fish.yBase + Math.sin(clock.elapsedTime * 2 + fish.angle) * 0.25;
         fish.mesh.rotation.y = fish.angle + Math.PI / 2;
     });
+
+    // Spawn new fish occasionally to maintain population
+    if (seededRandom() < 0.01 * delta) { // Small chance per frame
+        FishingSystem.spawnFish(
+            scene,
+            fishList,
+            CONFIG.islandRadius,
+            CONFIG.waterLevel,
+            createSingleFish,
+            CONFIG.fishCount
+        );
+    }
+
+    // Clean up fishing system claims
+    fishingSystem.cleanupClaims(tribeMembers);
 }
 
 // ============================================
