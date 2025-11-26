@@ -377,7 +377,7 @@ Useful for studying:
 - ⬜ Life cycle (babies, children, reproduction)
 - ⬜ Weather system
 - ⬜ Combat system
-- ⬜ **Audio system & soundtracks** - Ambient music, sound effects, environmental audio
+- ⬜ **Audio system & soundtracks** - 4+ tropical soundtracks (2-3 with heavy beats/drums), ambient music, sound effects, environmental audio
 
 ## 🔨 Major TODO Items
 
@@ -442,12 +442,14 @@ Useful for studying:
 #### 7. **Audio & Soundtracks** 🟡 MEDIUM PRIORITY
 - **Current**: No audio system
 - **Needed**: Complete audio implementation
-  - Ambient soundtracks (tropical/island music)
-  - Dynamic music based on time of day
+  - **4+ soundtracks** with tropical/island vibes
+  - **2-3 soundtracks with heavy beats/drums** (energetic, rhythmic)
+  - Ambient background music (no time-based switching, just variety)
   - Sound effects for actions (gathering, walking, water)
   - Environmental audio (ocean waves, birds, wind)
   - UI sound effects
   - Volume controls
+  - Random/mixed playlist system
 
 #### 8. **Resource Collection Improvements** 🟢 LOW PRIORITY
 - Pick up fallen coconuts from ground
