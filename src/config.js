@@ -4,8 +4,8 @@
 
 export const VERSION = '2.0.0'; // Balance overhaul: spears, fishing, resources
 
-// Build number - increments with each commit (25 = current commit count)
-export const BUILD_NUMBER = 25;
+// Build number - increments with each commit (26 = current commit count)
+export const BUILD_NUMBER = 26;
 
 export const CONFIG = {
     // Agents
