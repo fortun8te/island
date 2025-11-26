@@ -5,6 +5,9 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import GUI from 'lil-gui';
 
 import { CONFIG, seededRandom, resetSeed } from './config.js';
@@ -43,7 +46,7 @@ import {
 // ============================================
 // GLOBAL STATE
 // ============================================
-let scene, camera, renderer, clock;
+let scene, camera, renderer, clock, composer;
 let water, sky, sun, ambientLight, hemiLight, fillLight;
 let island;
 let hut; // central storage / shelter
@@ -52,6 +55,7 @@ let allRocks = [];
 let allBushes = [];
 let tribeMembers = [];
 let fishList = [];
+let particles = [];
 
 // Camera state
 let cameraYaw = 0, cameraPitch = 0;
@@ -68,6 +72,7 @@ let frameCount = 0;
 let currentFPS = 60;
 let stepsPerSecond = 0;
 let stepCountThisSecond = 0;
+let windTime = 0;
 
 // ============================================
 // INITIALIZATION
@@ -104,7 +109,20 @@ async function init() {
     renderer.shadowMap.enabled = CONFIG.visualQuality === 'high';
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
+
+    // Post-processing
+    composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.6,  // strength
+        0.4,  // radius
+        0.85  // threshold
+    );
+    composer.addPass(bloomPass);
+
     updateLoadingProgress(30);
     
     // Build scene
@@ -129,6 +147,7 @@ async function init() {
     createHut();
     
     createFish();
+    createParticles();
     createTribeMembers();
     updateLoadingProgress(90);
     
@@ -293,8 +312,8 @@ function createWater() {
     const waterGeometry = new THREE.PlaneGeometry(8000, 8000);
     
     water = new Water(waterGeometry, {
-        textureWidth: 512,
-        textureHeight: 512,
+        textureWidth: 1024,
+        textureHeight: 1024,
         waterNormals: new THREE.TextureLoader().load(
             'https://threejs.org/examples/textures/waternormals.jpg',
             (texture) => {
@@ -302,11 +321,11 @@ function createWater() {
             }
         ),
         sunDirection: new THREE.Vector3(0.5, 0.5, 0.5),
-        sunColor: 0xffcc88,
-        waterColor: 0x007080,
-        distortionScale: 2,
+        sunColor: 0xffffff,
+        waterColor: 0x001e3f,
+        distortionScale: 3.7,
         fog: true,
-        alpha: 0.9
+        alpha: 0.85
     });
     
     water.rotation.x = -Math.PI / 2;
@@ -315,19 +334,27 @@ function createWater() {
     
     // Ocean floor
     const floorGeometry = new THREE.PlaneGeometry(4000, 4000);
-    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x0a3040, roughness: 1 });
+    const floorMaterial = new THREE.MeshStandardMaterial({
+        color: 0x0a2530,
+        roughness: 0.9,
+        metalness: 0.1
+    });
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -15;
+    floor.receiveShadow = true;
     scene.add(floor);
-    
+
     // Shallow water ring (reef-like)
     const shallowGeometry = new THREE.RingGeometry(CONFIG.islandRadius * 0.95, CONFIG.islandRadius * 1.4, 64);
-    const shallowMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x40b0a0, 
-        transparent: true, 
-        opacity: 0.3,
-        roughness: 0.8
+    const shallowMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3ac4b8,
+        transparent: true,
+        opacity: 0.4,
+        roughness: 0.6,
+        metalness: 0.2,
+        emissive: 0x0a4a40,
+        emissiveIntensity: 0.2
     });
     const shallow = new THREE.Mesh(shallowGeometry, shallowMaterial);
     shallow.rotation.x = -Math.PI / 2;
@@ -379,9 +406,10 @@ function createIsland() {
     
     const material = new THREE.MeshStandardMaterial({
         vertexColors: true,
-        roughness: 0.85,
+        roughness: 0.95,
         metalness: 0,
-        flatShading: false
+        flatShading: false,
+        envMapIntensity: 0.3
     });
     
     island = new THREE.Mesh(geometry, material);
@@ -464,8 +492,18 @@ function createHut() {
 // PALM TREES
 // ============================================
 function createPalmTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
-    const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+        color: 0x8B4513,
+        roughness: 0.95,
+        metalness: 0.05,
+        envMapIntensity: 0.2
+    });
+    const leafMaterial = new THREE.MeshStandardMaterial({
+        color: 0x228B22,
+        roughness: 0.8,
+        metalness: 0,
+        envMapIntensity: 0.4
+    });
     
     for (let i = 0; i < CONFIG.palmTreeCount; i++) {
         const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.5, CONFIG.islandRadius * 0.85, 2);
@@ -548,7 +586,12 @@ function addCoconutsToTree(tree) {
 // JUNGLE TREES
 // ============================================
 function createJungleTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+        color: 0x4a3520,
+        roughness: 0.95,
+        metalness: 0.05,
+        envMapIntensity: 0.15
+    });
     const canopyColors = [0x1a6b1a, 0x228b22, 0x2d7b2d, 0x1e8b1e];
     
     for (let i = 0; i < CONFIG.jungleTreeCount; i++) {
@@ -585,7 +628,9 @@ function createJungleTree(trunkMaterial, canopyColors) {
         const canopyGeometry = new THREE.SphereGeometry(size, 8, 6);
         const canopyMaterial = new THREE.MeshStandardMaterial({
             color: canopyColors[Math.floor(seededRandom() * canopyColors.length)],
-            roughness: 0.8
+            roughness: 0.85,
+            metalness: 0,
+            envMapIntensity: 0.35
         });
         const canopy = new THREE.Mesh(canopyGeometry, canopyMaterial);
         canopy.position.set(
@@ -636,8 +681,10 @@ function createRock() {
     const gray = 0.5 + seededRandom() * 0.2;
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(gray, gray * 0.95, gray * 0.9),
-        roughness: 0.85,
-        flatShading: true
+        roughness: 0.9,
+        metalness: 0.1,
+        flatShading: true,
+        envMapIntensity: 0.25
     });
     
     const rock = new THREE.Mesh(geometry, material);
@@ -651,7 +698,12 @@ function createRock() {
 // BUSHES
 // ============================================
 function createBushes() {
-    const bushMaterial = new THREE.MeshStandardMaterial({ color: 0x3d6a3d, roughness: 0.9 });
+    const bushMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3d6a3d,
+        roughness: 0.9,
+        metalness: 0,
+        envMapIntensity: 0.3
+    });
     const bushGeometry = new THREE.SphereGeometry(0.6, 8, 6);
     
     for (let i = 0; i < CONFIG.bushCount; i++) {
@@ -1416,6 +1468,95 @@ function updateFish(delta) {
 }
 
 // ============================================
+// AMBIENT PARTICLES (BUTTERFLIES)
+// ============================================
+function createParticles() {
+    const butterflyColors = [0xffaa00, 0xff6600, 0xffdd00, 0xff88ff, 0x66ddff];
+
+    for (let i = 0; i < 25; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = seededRandom() * CONFIG.islandRadius * 0.8;
+        const height = 2 + seededRandom() * 8;
+
+        const butterflyGroup = new THREE.Group();
+
+        // Two wings
+        const wingGeometry = new THREE.CircleGeometry(0.15, 6);
+        const wingColor = butterflyColors[Math.floor(seededRandom() * butterflyColors.length)];
+        const wingMaterial = new THREE.MeshStandardMaterial({
+            color: wingColor,
+            side: THREE.DoubleSide,
+            emissive: wingColor,
+            emissiveIntensity: 0.3,
+            metalness: 0.2,
+            roughness: 0.7
+        });
+
+        const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        leftWing.position.set(-0.1, 0, 0);
+        leftWing.rotation.y = Math.PI / 4;
+        butterflyGroup.add(leftWing);
+
+        const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        rightWing.position.set(0.1, 0, 0);
+        rightWing.rotation.y = -Math.PI / 4;
+        butterflyGroup.add(rightWing);
+
+        // Body
+        const bodyGeometry = new THREE.CapsuleGeometry(0.02, 0.2, 3, 6);
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            color: 0x222222,
+            roughness: 0.8
+        });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.rotation.x = Math.PI / 2;
+        butterflyGroup.add(body);
+
+        butterflyGroup.position.set(
+            Math.cos(angle) * dist,
+            height,
+            Math.sin(angle) * dist
+        );
+
+        scene.add(butterflyGroup);
+
+        particles.push({
+            mesh: butterflyGroup,
+            leftWing,
+            rightWing,
+            baseHeight: height,
+            phase: seededRandom() * Math.PI * 2,
+            speed: 0.5 + seededRandom() * 1.5,
+            orbitRadius: dist,
+            orbitAngle: angle
+        });
+    }
+}
+
+function updateParticles(delta) {
+    particles.forEach((particle) => {
+        // Flap wings
+        particle.phase += delta * 15;
+        const flap = Math.sin(particle.phase) * 0.5 + 0.5;
+        particle.leftWing.rotation.y = Math.PI / 4 + flap * 0.6;
+        particle.rightWing.rotation.y = -Math.PI / 4 - flap * 0.6;
+
+        // Float and drift
+        particle.orbitAngle += delta * particle.speed * 0.15;
+        const bobHeight = Math.sin(particle.phase * 0.5) * 0.5;
+        const wanderX = Math.sin(particle.phase * 0.3) * 2;
+        const wanderZ = Math.cos(particle.phase * 0.4) * 2;
+
+        particle.mesh.position.x = Math.cos(particle.orbitAngle) * particle.orbitRadius + wanderX;
+        particle.mesh.position.z = Math.sin(particle.orbitAngle) * particle.orbitRadius + wanderZ;
+        particle.mesh.position.y = particle.baseHeight + bobHeight;
+
+        // Face movement direction
+        particle.mesh.rotation.y = particle.orbitAngle + Math.PI / 2;
+    });
+}
+
+// ============================================
 // COCONUT REGENERATION
 // ============================================
 function regenerateCoconuts(delta) {
@@ -1627,7 +1768,7 @@ function animate() {
     });
     
     // Render
-    renderer.render(scene, camera);
+    composer.render();
 }
 
 function stepSimulation(delta) {
@@ -1640,13 +1781,45 @@ function updateVisuals(delta) {
     if (water) {
         water.material.uniforms['time'].value += delta * 0.4;
     }
-    
+
+    // Wind animation
+    windTime += delta;
+    const windStrength = 0.05;
+    const windSpeed = 1.2;
+
+    // Animate palm trees
+    allTrees.forEach((treeData) => {
+        if (treeData.mesh.userData.treeType === 'palm') {
+            const tree = treeData.mesh;
+            const offset = tree.position.x + tree.position.z;
+            const sway = Math.sin(windTime * windSpeed + offset) * windStrength;
+            tree.rotation.z = sway;
+            tree.rotation.x = Math.cos(windTime * windSpeed * 0.7 + offset) * windStrength * 0.5;
+        } else if (treeData.mesh.userData.treeType === 'jungle') {
+            const tree = treeData.mesh;
+            const offset = tree.position.x + tree.position.z;
+            const sway = Math.sin(windTime * windSpeed * 0.8 + offset) * windStrength * 0.6;
+            tree.rotation.z = sway;
+        }
+    });
+
+    // Animate bushes
+    allBushes.forEach((bush) => {
+        const offset = bush.position.x + bush.position.z;
+        const sway = Math.sin(windTime * windSpeed * 1.5 + offset) * windStrength * 0.8;
+        bush.rotation.z = sway;
+        bush.rotation.x = Math.cos(windTime * windSpeed * 1.3 + offset) * windStrength * 0.6;
+    });
+
     // Camera
     updateCamera(delta);
-    
+
     // Fish
     updateFish(delta);
-    
+
+    // Particles
+    updateParticles(delta);
+
     // Time of day auto-play
     if (CONFIG.autoPlayTime) {
         CONFIG.timeOfDay += delta * 0.015;
@@ -1662,6 +1835,7 @@ function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // ============================================
