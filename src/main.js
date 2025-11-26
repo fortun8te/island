@@ -481,12 +481,14 @@ function createHut() {
     hut = {
         mesh: hutGroup,
         position: new THREE.Vector3(0, y, 0),
-        // Shared stockpile
+        // Shared stockpile - all resources start at 0
         storage: {
             coconut: 0,
             wood: 0,
             stone: 0,
-            fishing_spear: 0
+            vine: 0,
+            fish: 0,
+            fishing_spear: 0  // Tools stored here - starts at 0, increases when crafted
         }
     };
 }
