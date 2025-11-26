@@ -43,6 +43,10 @@ import {
     improvedPlanTask,
     improvedIdleBehavior
 } from './systems/ai.js';
+import {
+    AnimationSystem,
+    ANIM_STATES
+} from './systems/animations.js';
 
 // ============================================
 // GLOBAL STATE
@@ -1038,16 +1042,28 @@ function executeAgentState(member, delta) {
                 member.state = 'idle';
                 member.task = null;
             }
-            // Use improved idle behavior for resting (calm, purposeful)
+            // Use improved resting animation
+            member.walkPhase += delta * 2;
             member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            improvedIdleBehavior(member, delta);
+            AnimationSystem.animateResting(member, delta, member.walkPhase);
             break;
 
         case 'eating':
-            handleEating(member);
-            member.state = 'idle';
-            member.task = null;
-            clearCarryVisual(member);
+            // Eating animation over time
+            if (!member.actionTimer || member.actionTimer === 0) {
+                member.actionTimer = 2.0; // 2 seconds to eat
+            }
+
+            member.walkPhase += delta * 5;
+            AnimationSystem.animateEating(member, delta, member.walkPhase);
+
+            member.actionTimer -= delta;
+            if (member.actionTimer <= 0) {
+                handleEating(member);
+                member.state = 'idle';
+                member.task = null;
+                clearCarryVisual(member);
+            }
             break;
 
         case 'walking':
@@ -1065,9 +1081,10 @@ function executeAgentState(member, delta) {
             break;
 
         default:
-            // Use improved idle behavior (NO random wandering)
+            // Use improved idle animation (NO random wandering)
+            member.walkPhase += delta * 2;
             member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            improvedIdleBehavior(member, delta);
+            AnimationSystem.animateIdle(member, delta, member.walkPhase);
     }
 }
 
@@ -1087,19 +1104,25 @@ function updateWalking(member, delta) {
     const speed = CONFIG.walkSpeed * delta;
 
     member.walkPhase += delta * CONFIG.walkSpeed * 5;
-    const legSwing = Math.sin(member.walkPhase) * 0.4;
-    const armSwing = Math.sin(member.walkPhase + Math.PI) * 0.25;
 
-    member.leftLeg.rotation.x = legSwing;
-    member.rightLeg.rotation.x = -legSwing;
+    // Use improved carrying animations if hauling
+    if (member.state === 'hauling') {
+        // Determine what is being carried
+        const carryingCoconuts = member.inventory.slots.has('coconut');
+        const carryingWood = member.inventory.slots.has('wood');
+        const carryingStone = member.inventory.slots.has('stone');
 
-    // If hauling, keep arms more forward to "carry"
-    if (member.state === 'hauling' && member.carryMesh) {
-        member.leftArm.rotation.x = -0.4;
-        member.rightArm.rotation.x = -0.4;
+        if (carryingStone) {
+            AnimationSystem.animateCarryingStone(member, delta);
+        } else if (carryingWood) {
+            AnimationSystem.animateCarryingWood(member, delta);
+        } else if (carryingCoconuts) {
+            const count = getInventoryCount(member.inventory, 'coconut');
+            AnimationSystem.animateCarryingCoconuts(member, delta, count);
+        }
     } else {
-        member.leftArm.rotation.x = -armSwing;
-        member.rightArm.rotation.x = armSwing;
+        // Normal walking animation
+        AnimationSystem.animateWalking(member, delta, CONFIG.walkSpeed);
     }
 
     const targetPos = resolveTaskTargetPosition(member);
@@ -1145,11 +1168,16 @@ function updateGathering(member, delta) {
         return;
     }
 
-    // "Punch" animation
+    // Use improved animations based on resource type
     member.walkPhase += delta * 10;
-    const punch = Math.sin(member.walkPhase) * 0.8;
-    member.rightArm.rotation.x = -0.6 - punch * 0.4;
-    member.leftArm.rotation.x = 0.2 + punch * 0.2;
+
+    if (task.resourceId === 'coconut') {
+        AnimationSystem.animateCoconutGathering(member, delta, member.walkPhase);
+    } else if (task.resourceId === 'wood') {
+        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
+    } else if (task.resourceId === 'stone') {
+        AnimationSystem.animateStoneGathering(member, delta, member.walkPhase);
+    }
 
     const baseResource = RESOURCES[task.resourceId?.toUpperCase()] || RESOURCES[task.resourceId];
     const baseTime = baseResource?.gatherTime || 1.0;
@@ -1208,10 +1236,10 @@ function updateCrafting(member, delta) {
     }
 
     member.actionTimer -= delta;
-    // Subtle crafting sway
+
+    // Use improved crafting animation
     member.walkPhase += delta * 4;
-    member.rightArm.rotation.x = -0.4 + Math.sin(member.walkPhase) * 0.2;
-    member.leftArm.rotation.x = -0.2 - Math.sin(member.walkPhase) * 0.1;
+    AnimationSystem.animateCrafting(member, delta, member.walkPhase);
 
     if (member.actionTimer > 0) return;
 
