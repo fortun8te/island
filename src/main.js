@@ -13,6 +13,7 @@ import {
     logTest, updateStats, runSanityChecks, checkGrounded, 
     checkAgentState, runSpeedTest, clearTestLog 
 } from './utils/sanityChecks.js';
+import { createRandomFish } from './utils/fishModel.js';
 
 // Survival systems
 import { 
@@ -698,27 +699,14 @@ function createFish() {
 }
 
 function createSingleFish(colors) {
-    const group = new THREE.Group();
     const color = colors[Math.floor(seededRandom() * colors.length)];
-    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2 });
+    const fishMesh = createRandomFish(color);
     
-    // Body
-    const bodyGeometry = new THREE.ConeGeometry(0.12, 0.5, 6);
-    bodyGeometry.rotateZ(-Math.PI / 2);
-    const body = new THREE.Mesh(bodyGeometry, material);
-    group.add(body);
-    
-    // Tail
-    const tailGeometry = new THREE.ConeGeometry(0.1, 0.15, 4);
-    tailGeometry.rotateZ(Math.PI / 2);
-    const tail = new THREE.Mesh(tailGeometry, material);
-    tail.position.x = -0.3;
-    group.add(tail);
-    
+    // Random scale for variety
     const scale = 0.7 + seededRandom() * 0.5;
-    group.scale.setScalar(scale);
+    fishMesh.scale.setScalar(scale);
     
-    return { mesh: group };
+    return { mesh: fishMesh };
 }
 
 // ============================================
