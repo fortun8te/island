@@ -127,7 +127,7 @@ const CONFIG = {
     waterLevel: 0,
     simulationSpeed: 1,
     maxSimulationSpeed: 50, // Max 50x
-    timeOfDay: 0.26,
+    timeOfDay: 0.23,
     autoPlayTime: false,
     visualQuality: 'high',
     showDebug: true,
@@ -901,7 +901,7 @@ function init() {
     setupGUI();
     window.addEventListener('resize', onResize);
     
-    // Keep default timeOfDay from CONFIG (0.26)
+    // Keep default timeOfDay from CONFIG (0.23)
     updateTimeOfDay();
     
     setTimeout(() => runSanityChecks(), 500);
