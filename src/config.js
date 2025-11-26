@@ -2,6 +2,8 @@
 // CONFIGURATION - Island Simulation
 // ============================================
 
+export const VERSION = '2.0.0'; // Balance overhaul: spears, fishing, resources
+
 export const CONFIG = {
     // Agents
     tribeMembers: 10,

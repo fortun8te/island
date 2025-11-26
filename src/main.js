@@ -7,7 +7,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import GUI from 'lil-gui';
 
-import { CONFIG, seededRandom, resetSeed } from './config.js';
+import { CONFIG, VERSION, seededRandom, resetSeed } from './config.js';
 import { getTerrainHeight, getRandomIslandPosition, snapToTerrain } from './utils/terrain.js';
 import { 
     logTest, updateStats, runSanityChecks, checkGrounded, 
@@ -92,7 +92,12 @@ let stepCountThisSecond = 0;
 // ============================================
 async function init() {
     updateLoadingProgress(10);
-    logTest('Initializing scene...', 'info');
+    logTest(`Initializing scene... (v${VERSION})`, 'info');
+    
+    // Update page title with version
+    if (typeof document !== 'undefined') {
+        document.title = `🏝️ Island Simulation v${VERSION}`;
+    }
     
     // Reset random seed for determinism
     resetSeed(CONFIG.seed);
@@ -1077,7 +1082,7 @@ function executeAgentState(member, delta) {
             member.walkPhase += delta * 5;
             AnimationSystem.animateEating(member, delta, member.walkPhase);
 
-            member.actionTimer -= delta;
+            member.actionTimer -= delta * CONFIG.simulationSpeed;
             if (member.actionTimer <= 0) {
                 handleEating(member);
                 member.state = 'idle';
