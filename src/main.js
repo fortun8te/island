@@ -1102,7 +1102,7 @@ function executeAgentState(member, delta) {
             break;
 
         case 'gathering':
-            updateGathering(member, delta);
+            updateGathering(member, delta, tribeCoordinator);
             break;
 
         case 'crafting':
@@ -1197,23 +1197,50 @@ function updateWalking(member, delta) {
     }
 }
 
-function updateGathering(member, delta) {
+function updateGathering(member, delta, coordinator = null) {
     const mesh = member.mesh;
     const task = member.task;
-    if (!task) {
+    if (!task || !task.target) {
         member.state = 'idle';
+        member.task = null;
         return;
     }
 
-    // Use improved animations based on resource type
-    member.walkPhase += delta * 10;
+    // Face the resource we're gathering
+    const targetPos = task.target.position || task.target;
+    member.targetAngle = angleTo(member.mesh.position, targetPos);
+    const angleDiff = normalizeAngle(member.targetAngle - mesh.rotation.y);
+    mesh.rotation.y += angleDiff * delta * 6; // Smoothly face resource
 
-    if (task.resourceId === 'coconut') {
+    // STOP MOVING - agent should stand still while gathering
+    // Don't walk into the resource, stop at gathering distance
+    const distToResource = mesh.position.distanceTo(targetPos);
+    if (distToResource > 2.5) {
+        // Still too far, keep walking
+        const speed = CONFIG.walkSpeed * CONFIG.simulationSpeed * delta;
+        member.targetAngle = angleTo(member.mesh.position, targetPos);
+        const angleDiff2 = normalizeAngle(member.targetAngle - mesh.rotation.y);
+        mesh.rotation.y += angleDiff2 * delta * 4;
+        mesh.position.x += Math.sin(mesh.rotation.y) * speed;
+        mesh.position.z += Math.cos(mesh.rotation.y) * speed;
+        const terrainY = getTerrainHeight(mesh.position.x, mesh.position.z);
+        mesh.position.y = terrainY + Math.abs(Math.sin((member.walkPhase || 0) * 5)) * 0.04;
+        return; // Still walking to resource
+    }
+
+    // Now at gathering distance - play animations
+    // Use improved animations based on resource type
+    member.walkPhase = (member.walkPhase || 0) + delta * 10;
+
+    if (task.resourceId === 'coconut' || task.resourceId === 'coconuts') {
         AnimationSystem.animateCoconutGathering(member, delta, member.walkPhase);
     } else if (task.resourceId === 'wood') {
         AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
     } else if (task.resourceId === 'stone') {
         AnimationSystem.animateStoneGathering(member, delta, member.walkPhase);
+    } else if (task.resourceId === 'vine') {
+        // Use similar animation to wood gathering for vines
+        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
     }
 
     const baseResource = RESOURCES[task.resourceId?.toUpperCase()] || RESOURCES[task.resourceId];
@@ -1502,7 +1529,17 @@ function onDestinationReached(member) {
         return;
     }
 
-    if (task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone') {
+    if (task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone' || task.type === 'gather_vine') {
+        // Check if close enough to start gathering (stop at 2.5 units away)
+        const targetPos = task.target?.position || task.target;
+        const distToResource = member.mesh.position.distanceTo(targetPos);
+        
+        if (distToResource > 2.5) {
+            // Still walking to resource - don't start gathering yet
+            return; // Keep walking
+        }
+        
+        // Close enough - start gathering
         member.state = 'gathering';
         member.actionTimer = 0;
         return;
@@ -1680,7 +1717,7 @@ function normalizeAngle(a) {
     return a;
 }
 
-function findNearestPalmWithCoconuts(member, coordinator) {
+function findNearestPalmWithCoconuts(member, coordinator = null) {
     let nearest = null;
     let nearestDist = Infinity;
 
@@ -1756,7 +1793,7 @@ function hutAsInventory() {
 }
 
 // Additional helper functions for improved AI
-function findNearestJungleTree(member, coordinator) {
+function findNearestJungleTree(member, coordinator = null) {
     let nearest = null;
     let nearestDist = Infinity;
 
