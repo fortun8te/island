@@ -1,0 +1,20 @@
+{
+  "name": "island-simulation",
+  "version": "1.0.0",
+  "description": "3D Tropical Island Simulation with ML-ready architecture",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --open",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --experimental-vm-modules tests/sanity.js"
+  },
+  "dependencies": {
+    "three": "^0.160.0",
+    "lil-gui": "^0.19.2"
+  },
+  "devDependencies": {
+    "vite": "^5.0.10"
+  }
+}
+

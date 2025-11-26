@@ -1,0 +1,4908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏝️ Island Simulation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            overflow: hidden;
+            background: #0a0f14;
+        }
+        #canvas-container { width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; }
+        #loading {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 1000; transition: opacity 0.8s ease, visibility 0.8s;
+        }
+        #loading.hidden { opacity: 0; visibility: hidden; }
+        #loading h1 {
+            font-size: 2.5rem; margin-bottom: 1rem;
+            color: #fff;
+            font-weight: 300;
+            letter-spacing: 0.2em;
+        }
+        #loading p { color: rgba(255,255,255,0.4); margin-bottom: 2rem; font-size: 0.75rem; letter-spacing: 0.3em; text-transform: uppercase; }
+        #loading-bar { width: 200px; height: 1px; background: rgba(255,255,255,0.15); overflow: hidden; }
+        #loading-progress { height: 100%; width: 0%; background: #fff; transition: width 0.3s; }
+        #controls-hint {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.7); backdrop-filter: blur(12px);
+            padding: 12px 24px; border-radius: 12px; color: rgba(255,255,255,0.9);
+            font-size: 0.85rem; z-index: 100; border: 1px solid rgba(255,255,255,0.1);
+        }
+        #controls-hint.hidden { opacity: 0; pointer-events: none; }
+        #controls-hint kbd { background: rgba(255,255,255,0.15); padding: 3px 8px; border-radius: 4px; margin: 0 2px; }
+        #gui-container { position: fixed; top: 16px; right: 16px; z-index: 100; }
+        #debug-overlay {
+            position: fixed; top: 16px; left: 16px;
+            background: rgba(0,0,0,0.75); backdrop-filter: blur(12px);
+            padding: 16px; border-radius: 12px; color: #fff;
+            font-family: 'SF Mono', monospace; font-size: 0.75rem;
+            z-index: 100; max-width: 320px; border: 1px solid rgba(255,255,255,0.1);
+        }
+        #debug-overlay h3 { font-size: 0.85rem; margin-bottom: 8px; color: #00d4aa; }
+        #debug-overlay .stat { display: flex; justify-content: space-between; margin: 4px 0; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        #debug-overlay .stat-label { color: rgba(255,255,255,0.6); }
+        #debug-overlay .stat-value { color: #fff; font-weight: 500; }
+        .warning { color: #f59e0b; }
+        .error { color: #ef4444; }
+        .success { color: #10b981; }
+        #test-log { max-height: 150px; overflow-y: auto; margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); }
+        #test-log div { padding: 2px 0; font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <h1>ISLAND</h1>
+        <p>Loading simulation</p>
+        <div id="loading-bar"><div id="loading-progress"></div></div>
+    </div>
+    <div id="canvas-container"></div>
+    <div id="controls-hint">
+        <kbd>Click</kbd> to look around · <kbd>WASD</kbd> move · <kbd>Q</kbd><kbd>E</kbd> up/down · <kbd>Shift</kbd> fast
+    </div>
+    <div id="gui-container"></div>
+    <div id="debug-overlay">
+        <h3>📊 Simulation Stats</h3>
+        <div class="stat"><span class="stat-label">FPS</span><span class="stat-value" id="stat-fps">--</span></div>
+        <div class="stat"><span class="stat-label">Sim Steps/s</span><span class="stat-value" id="stat-steps">--</span></div>
+        <div class="stat"><span class="stat-label">Agents Alive</span><span class="stat-value" id="stat-agents">--</span></div>
+        <div class="stat"><span class="stat-label">Deaths</span><span class="stat-value" id="stat-deaths">0</span></div>
+        <div class="stat"><span class="stat-label">Time of Day</span><span class="stat-value" id="stat-time">--</span></div>
+        
+        <h3 style="margin-top: 12px;">🌴 Resources</h3>
+        <div class="stat"><span class="stat-label">🥥 Tree</span><span class="stat-value" id="stat-coconuts">--</span></div>
+        <div class="stat"><span class="stat-label">🥥 Ground</span><span class="stat-value" id="stat-ground-coconuts">0</span></div>
+        <div class="stat"><span class="stat-label">🪵 Sticks</span><span class="stat-value" id="stat-sticks">--</span></div>
+        <div class="stat"><span class="stat-label">🪨 Stone</span><span class="stat-value" id="stat-stone">--</span></div>
+        <div class="stat"><span class="stat-label">🌿 Vines</span><span class="stat-value" id="stat-vines">--</span></div>
+        <div class="stat"><span class="stat-label">🏠 Stash</span><span class="stat-value" id="stat-stash">🥥0 🪵0 🪨0 🌿0 🐟0</span></div>
+        <div class="stat"><span class="stat-label">🏆 Survival Score</span><span class="stat-value" id="stat-survival-score">0</span></div>
+        
+        <h3 style="margin-top: 12px;">🎒 Agent Inventories</h3>
+        <div id="agent-inventories" style="font-size: 0.65rem; max-height: 100px; overflow-y: auto;"></div>
+        
+        <h3 style="margin-top: 12px;">🏆 Leaderboard</h3>
+        <div id="agent-leaderboard" style="font-size: 0.65rem; max-height: 100px; overflow-y: auto;"></div>
+        
+        <div id="test-log"><h3>🧪 Self-Tests</h3></div>
+    </div>
+
+    <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    
+    <script type="module">
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { Water } from 'three/addons/objects/Water.js';
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+// ============================================
+// CONFIGURATION - LUSH TROPICAL ISLAND
+// ============================================
+const CONFIG = {
+    tribeMembers: 5, // Multiple agents for resource competition
+    agentSpeed: 2.5, // Unified speed
+    cameraSpeed: 80,
+    cameraSensitivity: 0.003,
+    cameraMode: 'orbit',
+    
+    // Island size - smaller, more dense
+    islandRadius: 75,
+    beachWidth: 12,
+    
+    // Resources - Dense jungle in center
+    palmTreeCount: 12, // Palm trees on beach
+    jungleTreeCount: 40, // Dense jungle in center
+    rockCount: 8, // Rock formations for stone
+    bushCount: 45, // Lots of bushes and undergrowth
+    grassPatchCount: 60, // Grass patches for visual variety
+    fishCount: 15,
+    
+    waterLevel: 0,
+    simulationSpeed: 1,
+    maxSimulationSpeed: 50, // Max 50x
+    timeOfDay: 0.26,
+    autoPlayTime: false,
+    visualQuality: 'high',
+    showDebug: true,
+    
+    // Survival - Challenging but fair
+    hungerDecayRate: 0.002, // Moderate hunger decay
+    hungerMovingMultiplier: 1.03, // Moving makes you slightly hungrier
+    energyDecayRate: 0.0008, // SLOWER energy drain - agents were dying of exhaustion
+    energyRestoreRate: 0.2, // FASTER energy restore when resting
+    coconutNutrition: 0.4, // Decent nutrition per coconut
+    maxInventory: 6, // Can carry up to 6 coconuts (3 per hand)
+    coconutRespawnTime: 15000, // 15 seconds for tree to regen a coconut
+    treeCoconutCapacity: 3, // Each tree can hold max 3 coconuts
+    
+    fixedTimestep: 1/20,
+    maxStepsPerFrame: 50,
+    seed: 12345,
+    floatingThreshold: 0.5,
+    sinkingThreshold: 1.0,
+    
+    // Auto-respawn
+    autoRespawn: true,
+    respawnDelay: 2000,
+    
+    // Agent limits
+    maxAgents: 200,
+    
+    // Extended needs & lifecycle (Phase 2+)
+    // For now, old age is disabled – health only tied to hunger so survival is clear.
+    healthDecayBase: 0.0005,      // Reserved for future; not heavily used now
+    healthRecoverRate: 0.002,     // Reserved for future; light regen when well-fed
+    socialNeedDecayRate: 0.001,   // Social need decays when isolated
+    socialNeedRecoverRate: 0.004, // Recovers when near others
+    reproductionDriveRate: 0.0008,// Drive increases over time (not lethal)
+    ageYearsPerSecond: 0.02,      // Aging speed (visual/stat only)
+    oldAgeThreshold: 55,          // Kept for future; no old-age deaths right now
+    maxNaturalAge: 95             // Kept for future; no old-age deaths right now
+};
+
+let _seed = CONFIG.seed;
+function seededRandom() { _seed = (_seed * 9301 + 49297) % 233280; return _seed / 233280; }
+function resetSeed(s = CONFIG.seed) { _seed = s; }
+
+// ============================================
+// RESOURCE SYSTEM - Phase 1
+// ============================================
+const RESOURCES = {
+    COCONUT: { 
+        id: 'coconut',
+        name: 'Coconut',
+        nutrition: 0.4, 
+        gatherTime: 1.0, 
+        energyCost: 0.05,
+        spoils: false,
+        sources: ['palm']
+    },
+    WOOD: { 
+        id: 'wood',
+        name: 'Wood',
+        gatherTime: 2.0, 
+        energyCost: 0.1,
+        sources: ['ground_stick', 'palm_chop']
+    },
+    STONE: { 
+        id: 'stone',
+        name: 'Stone',
+        gatherTime: 1.5, 
+        energyCost: 0.08,
+        sources: ['rock']
+    },
+    VINE: { 
+        id: 'vine',
+        name: 'Vine',
+        gatherTime: 1.0, 
+        energyCost: 0.05,
+        sources: ['bush']
+    }
+};
+
+// Tool recipes
+const TOOL_RECIPES = {
+    GATHERING_STICK: {
+        id: 'gathering_stick',
+        name: 'Gathering Stick',
+        cost: { wood: 2, vine: 1 },
+        effect: { gatherSpeedBonus: 0.5 }, // 50% faster gathering
+        durability: 10
+    },
+    STONE_AXE: {
+        id: 'stone_axe',
+        name: 'Stone Axe',
+        cost: { wood: 2, stone: 2, vine: 1 },
+        effect: { canChopTrees: true },
+        durability: 5
+    },
+    SPEAR: {
+        id: 'spear',
+        name: 'Fishing Spear',
+        cost: { wood: 2, vine: 1 },
+        effect: { fishingBonus: 0.3 }, // Better catch chance
+        durability: 12
+    }
+};
+
+// Ground resources (sticks scattered around)
+let groundSticks = [];
+const MAX_GROUND_STICKS = 15;
+
+// Helper: Get total inventory count
+function getInventoryTotal(inv) {
+    return (inv.coconuts || 0) + (inv.wood || 0) + (inv.stone || 0) + (inv.vines || 0);
+}
+
+// Helper: Check if agent can carry more
+function canCarryMore(agent) {
+    return getInventoryTotal(agent.inventory) < CONFIG.maxInventory;
+}
+
+// ============================================
+// GLOBAL STATE
+// ============================================
+let scene, camera, renderer, clock;
+let water, sky, sun, ambientLight, hemiLight, fillLight;
+let island;
+let allTrees = [];
+let allRocks = [];
+let allBushes = [];
+let grassPatches = [];
+let tribeMembers = [];
+let fishList = [];
+const tacticalMarkerGeo = new THREE.CylinderGeometry(0.2, 0.2, 10, 6);
+const tacticalMarkerMat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.85, depthTest: false });
+
+// Simple central stash / town hall where agents drop resources
+const STASH_POSITION = { x: 0, y: 0, z: 0 }; // y will be snapped to terrain in init
+let townHallMesh = null;
+let stashVisuals = {
+    coconuts: null,
+    wood: null,
+    stone: null,
+    vines: null,
+    fish: null,
+    // Canvas/sprite label above town hall
+    labelSprite: null,
+    labelTexture: null,
+    labelCanvas: null,
+    labelCtx: null
+};
+const sharedStash = {
+    coconuts: 0,
+    wood: 0,
+    stone: 0,
+    vines: 0,
+    mullet: 0,
+    parrotfish: 0,
+    grouper: 0
+};
+
+let cameraYaw = 0, cameraPitch = 0;
+let isPointerLocked = false;
+let orbitCameraAngle = 0;
+let controls = { forward: false, backward: false, left: false, right: false, up: false, down: false, shift: false };
+let simulationPaused = false;
+
+// ============================================
+// SIMPLE AUDIO SYSTEM - Minimal, safe ambient + SFX
+// ============================================
+let audioContext = null;
+let soundEnabled = true;
+let musicPlaying = false;
+let waveGain = null;
+let masterGain = null;
+
+function initAudio() {
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioContext.createGain();
+        masterGain.connect(audioContext.destination);
+        masterGain.gain.value = 1.0;
+        soundEnabled = true;
+        
+        // Start ambient audio on first user interaction (to satisfy autoplay policies)
+        const startOnce = () => {
+            startAmbientSounds();
+            document.removeEventListener('click', startOnce);
+            document.removeEventListener('keydown', startOnce);
+        };
+        document.addEventListener('click', startOnce);
+        document.addEventListener('keydown', startOnce);
+    } catch (e) {
+        console.warn('Web Audio init failed, running silently', e);
+        soundEnabled = false;
+    }
+}
+
+function setMasterMute(muted) {
+    soundEnabled = !muted;
+    if (masterGain) {
+        masterGain.gain.value = muted ? 0 : 1;
+    }
+}
+
+function startAmbientSounds() {
+    if (!audioContext || musicPlaying) return;
+    musicPlaying = true;
+    
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+    
+    startWaveSounds();
+    startSimpleMusic();
+}
+
+// Simple wave sounds
+function startWaveSounds() {
+    const bufferSize = audioContext.sampleRate * 2;
+    const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+    }
+    
+    const whiteNoise = audioContext.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+    whiteNoise.loop = true;
+    
+    const filter = audioContext.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 350;
+    
+    waveGain = audioContext.createGain();
+    waveGain.gain.value = 0.04;
+    
+    whiteNoise.connect(filter);
+    filter.connect(waveGain);
+    waveGain.connect(masterGain);
+    
+    whiteNoise.start();
+}
+
+// Simple tropical music - one track, no complexity
+function startSimpleMusic() {
+    const bpm = 68;
+    const beatDuration = 60 / bpm;
+    
+    // Simple pentatonic melody
+    const melody = [
+        { note: 440, dur: 1.5 }, { note: 0, dur: 0.5 },
+        { note: 494, dur: 1 }, { note: 440, dur: 1 },
+        { note: 0, dur: 1 },
+        { note: 370, dur: 1.5 }, { note: 330, dur: 1 },
+        { note: 0, dur: 2 },
+        { note: 494, dur: 0.5 }, { note: 440, dur: 1 },
+        { note: 370, dur: 1.5 },
+        { note: 0, dur: 3 },
+    ];
+    
+    let melodyTime = audioContext.currentTime + 1;
+    
+    function scheduleMusic() {
+        if (!musicPlaying) return;
+        
+        const now = audioContext.currentTime;
+        
+        while (melodyTime < now + 4) {
+            melody.forEach(({ note, dur }) => {
+                if (note > 0) {
+                    playNote(note, melodyTime, dur * beatDuration * 0.8, 0.02);
+                }
+                melodyTime += dur * beatDuration;
+            });
+        }
+        
+        setTimeout(scheduleMusic, 2000);
+    }
+    
+    scheduleMusic();
+}
+
+// Simple note player
+function playNote(freq, startTime, duration, volume) {
+    if (!audioContext || !masterGain) return;
+    
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    
+    osc.connect(gain);
+    gain.connect(masterGain);
+    
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.1);
+}
+
+function playRetroNote(freq, startTime, duration, volume, waveform) {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    
+    osc.type = waveform;
+    osc.frequency.value = freq;
+    
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.01);
+    gain.gain.setValueAtTime(volume, startTime + duration * 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    
+    osc.connect(gain);
+    gain.connect(masterGain); // Route through master gain for mute control
+    
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+}
+
+// Simple sound effects - minimal to avoid glitches
+function playSound(type, volume = 0.3) {
+    if (!soundEnabled || !audioContext || !masterGain) return;
+    
+    const now = audioContext.currentTime;
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    
+    // Map a few simple event types to pitches
+    let freq = 440;
+    switch (type) {
+        case 'pickup': freq = 880; break;
+        case 'eat': freq = 660; break;
+        case 'coconut_drop': freq = 220; break;
+        case 'death': freq = 180; break;
+        case 'water_splash': freq = 320; break;
+        default: freq = 440;
+    }
+    
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(volume, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    
+    osc.connect(gain);
+    gain.connect(masterGain);
+    
+    osc.start(now);
+    osc.stop(now + 0.2);
+}
+
+// Proximity audio disabled
+function updateProximityAudio() {
+    // Disabled for now
+    return;
+}
+
+// Agent sounds currently minimal / disabled
+function updateAgentSounds(agent, delta) {
+    return;
+}
+
+let simulationAccumulator = 0;
+let totalSimSteps = 0;
+let totalDeaths = 0;
+let lastFPSUpdate = 0;
+let frameCount = 0;
+let currentFPS = 60;
+let stepsPerSecond = 0;
+let stepCountThisSecond = 0;
+
+let testLog = [];
+
+// ============================================
+// TERRAIN - BIGGER WITH WIDE BEACH
+// ============================================
+const islandSeed = { a: 4.2, b: 6.8, c: 2.5 };
+
+function getTerrainHeight(x, z) {
+    const dist = Math.sqrt(x * x + z * z);
+    
+    // Water - flat at depth
+    if (dist >= CONFIG.islandRadius) {
+        return -5;
+    }
+    
+    // Island with terrain variation - jungle hills in center
+    const normalizedDist = dist / CONFIG.islandRadius;
+    
+    // Base height - dome shape, higher in center (jungle area)
+    let height = 2 + (1 - normalizedDist) * 10; // 2 at edge, 12 at center
+    
+    // Add rolling hills using layered noise
+    const noiseScale1 = 0.06;
+    const noiseScale2 = 0.12;
+    const nx1 = Math.sin(x * noiseScale1) * Math.cos(z * noiseScale1 * 1.3);
+    const nz1 = Math.cos(x * noiseScale1 * 0.7) * Math.sin(z * noiseScale1);
+    const nx2 = Math.sin(x * noiseScale2 + 1.5) * Math.cos(z * noiseScale2);
+    const nz2 = Math.cos(x * noiseScale2) * Math.sin(z * noiseScale2 + 0.8);
+    
+    // More variation in jungle center, less on beach
+    const hilliness = (1 - normalizedDist) * (1 - normalizedDist);
+    height += (nx1 + nz1) * 3 * hilliness;
+    height += (nx2 + nz2) * 1.5 * hilliness;
+    
+    // Flatten the beach area smoothly
+    if (normalizedDist > 0.65) {
+        const beachBlend = (normalizedDist - 0.65) / 0.35;
+        const beachBlendSmooth = beachBlend * beachBlend * (3 - 2 * beachBlend); // smoothstep
+        height = height * (1 - beachBlendSmooth) + 2 * beachBlendSmooth;
+    }
+    
+    return height;
+}
+
+function getRandomIslandPosition(minDist = 10, maxDist = null, minHeight = 3, maxAttempts = 150) {
+    maxDist = maxDist || CONFIG.islandRadius * 0.85;
+    for (let i = 0; i < maxAttempts; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = minDist + seededRandom() * (maxDist - minDist);
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        if (y >= minHeight) return { x, y, z };
+    }
+    return { x: 0, y: getTerrainHeight(0, 0), z: 0 };
+}
+
+function getBeachPosition(maxAttempts = 100) {
+    // Palm trees should be SAFELY on beach, not at water edge
+    const beachInner = CONFIG.islandRadius * 0.65; // Start further in
+    const beachOuter = CONFIG.islandRadius * 0.88; // Don't go too close to water
+    for (let i = 0; i < maxAttempts; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = beachInner + seededRandom() * (beachOuter - beachInner);
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        // Only place on dry beach (height 2-6, not too low)
+        if (y >= 2 && y <= 6) return { x, y, z };
+    }
+    return null;
+}
+
+// Simple fishing spot near shoreline (for Tier 1 fish)
+function getShoreFishingSpot(maxAttempts = 80) {
+    for (let i = 0; i < maxAttempts; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = CONFIG.islandRadius * (0.9 + seededRandom() * 0.05); // Just inside water line
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        if (y > CONFIG.waterLevel + 0.5 && y < CONFIG.waterLevel + 3) {
+            return { x, y, z };
+        }
+    }
+    return null;
+}
+
+// ============================================
+// LOGGING
+// ============================================
+function logTest(message, type = 'info') {
+    testLog.push({ message, type, time: Date.now() });
+    if (testLog.length > 50) testLog.shift();
+    const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️';
+    console.log(`[Test] ${prefix} ${message}`);
+    updateTestLogDOM();
+}
+
+function updateTestLogDOM() {
+    const el = document.getElementById('test-log');
+    if (!el) return;
+    el.innerHTML = '<h3>🧪 Self-Tests</h3>' + testLog.slice(-10).map(e => 
+        `<div class="${e.type}">${e.message}</div>`
+    ).join('');
+}
+
+// Smooth smart score over time
+let smoothedSmartScore = 50;
+let smoothedSurvivalRate = 0.5;
+let survivalScore = 0;
+let smoothedSurvivalScore = 0;
+let lastSurvivalLogTime = 0;
+let lastStashSnapshotTime = 0;
+
+function updateStats(data) {
+    // Calculate resource availability
+    const availableSticks = groundSticks.filter(s => !s.collected && s.mesh.visible).length;
+    const totalStone = allRocks.reduce((sum, r) => sum + (r.mesh.userData.stoneAmount || 0), 0);
+    const totalVines = allBushes.reduce((sum, b) => sum + (b.mesh.userData.vineAmount || 0), 0);
+    
+    const els = {
+        'stat-fps': data.fps?.toFixed(0),
+        'stat-steps': data.stepsPerSecond?.toFixed(0),
+        'stat-agents': data.agentsAlive,
+        'stat-deaths': data.deaths,
+        'stat-time': getTimeOfDayName(CONFIG.timeOfDay),
+        'stat-coconuts': data.coconutsAvailable,
+        'stat-ground-coconuts': groundCoconuts?.length || 0,
+        'stat-sticks': availableSticks,
+        'stat-stone': totalStone,
+        'stat-vines': totalVines,
+        'stat-stash': `🥥${sharedStash.coconuts} 🪵${sharedStash.wood} 🪨${sharedStash.stone} 🌿${sharedStash.vines} 🐟${sharedStash.mullet + sharedStash.parrotfish + sharedStash.grouper}`
+    };
+    // Survival Score - weighted hut stash + food eaten + survival time, with death/inefficiency penalties
+    let stashFood = sharedStash.coconuts * 5 +
+        sharedStash.mullet * 8 +
+        sharedStash.parrotfish * 12 +
+        sharedStash.grouper * 18;
+    const stashMaterials = (sharedStash.wood + sharedStash.stone + sharedStash.vines) * 2;
+    
+    let totalFoodEaten = 0;
+    let totalSurvivalTime = 0;
+    let ineffPenalty = 0;
+    if (tribeMembers) {
+        tribeMembers.forEach(a => {
+            totalFoodEaten += (a.coconutsEaten || 0);
+            totalSurvivalTime += (a.survivalTime || 0);
+            if (a.lowEfficiencyTime && a.lowEfficiencyTime > 10) {
+                ineffPenalty += (a.lowEfficiencyTime - 10) * 2;
+            }
+        });
+    }
+    const deathsPenalty = totalDeaths * 200;
+    const rawSurvivalScore = stashFood + stashMaterials + totalFoodEaten * 20 + totalSurvivalTime * 0.5 - deathsPenalty - ineffPenalty;
+    survivalScore = Math.max(0, rawSurvivalScore);
+    smoothedSurvivalScore = smoothedSurvivalScore === 0
+        ? survivalScore
+        : smoothedSurvivalScore * 0.9 + survivalScore * 0.1;
+    els['stat-survival-score'] = smoothedSurvivalScore.toFixed(0);
+    
+    // Log Survival Score milestones and stash snapshots periodically
+    const now = performance.now();
+    if (now - lastSurvivalLogTime > 5000) {
+        lastSurvivalLogTime = now;
+        logTest(`🏆 Survival Score: ${smoothedSurvivalScore.toFixed(0)}  |  Stash 🥥${sharedStash.coconuts} 🪵${sharedStash.wood} 🪨${sharedStash.stone} 🌿${sharedStash.vines} 🐟${sharedStash.mullet + sharedStash.parrotfish + sharedStash.grouper}`, 'info');
+    }
+    
+    for (const [id, val] of Object.entries(els)) {
+        const el = document.getElementById(id);
+        if (el && val !== undefined) el.textContent = val;
+    }
+    
+    // Update agent inventories display
+    const inventoriesDiv = document.getElementById('agent-inventories');
+    if (inventoriesDiv && tribeMembers) {
+        const stashLine = `<div style="padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.25);font-weight:600;">
+            🏠 Hut: 🥥${sharedStash.coconuts} 🪵${sharedStash.wood} 🪨${sharedStash.stone} 🌿${sharedStash.vines} 🐟${sharedStash.mullet + sharedStash.parrotfish + sharedStash.grouper}
+        </div>`;
+        const agentsHtml = tribeMembers.filter(a => a.alive).map(a => {
+            const inv = a.inventory;
+            const tools = [];
+            if (a.tools.gatheringStick) tools.push(`🔧${a.tools.gatheringStick.durability}`);
+            if (a.tools.stoneAxe) tools.push(`🪓${a.tools.stoneAxe.durability}`);
+            const toolStr = tools.length > 0 ? ` [${tools.join(' ')}]` : '';
+            const eff = a.efficiency !== undefined ? ` · ⚙️${Math.round(a.efficiency * 100)}%` : '';
+            const objective = a.currentObjective ? ` · 🎯${a.currentObjective}` : '';
+            const stateEmoji = {
+                'idle': '😴', 'walking': '🚶', 'gathering': '🌴', 'gathering_wood': '🪵',
+                'gathering_stone': '🪨', 'gathering_vine': '🌿', 'eating': '🍽️',
+                'resting': '💤', 'crafting': '🔨', 'pickingUp': '🤲', 'giving': '🤝',
+                'fishing': '🎣'
+            }[a.state] || '❓';
+            const mullet = inv.mullet || 0;
+            const parrot = inv.parrotfish || 0;
+            const grouper = inv.grouper || 0;
+            const fishStr = (mullet + parrot + grouper) > 0
+                ? ` 🐟${mullet}${parrot ? ' 🐠'+parrot : ''}${grouper ? ' 🐡'+grouper : ''}`
+                : '';
+            return `<div style="padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.1);">
+                ${stateEmoji} <b>${a.id.split('_')[1]}</b>: 🥥${inv.coconuts} 🪵${inv.wood} 🪨${inv.stone} 🌿${inv.vines}${fishStr}${toolStr}${objective}${eff}
+            </div>`;
+        }).join('');
+        inventoriesDiv.innerHTML = stashLine + agentsHtml;
+    }
+    
+    // Update leaderboard (top 5 agents by survival time)
+    const leaderboard = document.getElementById('agent-leaderboard');
+    if (leaderboard && tribeMembers) {
+        tribeMembers.forEach(a => {
+            if (a.coconutsEaten === undefined) a.coconutsEaten = 0;
+            if (a.survivalTime === undefined) a.survivalTime = 0;
+        });
+        
+        const sortedAgents = [...tribeMembers]
+            .sort((a, b) => (b.survivalTime || 0) - (a.survivalTime || 0))
+            .slice(0, 5);
+        
+        leaderboard.innerHTML = sortedAgents.map((a, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
+            const aliveBadge = a.alive ? '🟢' : '🔴';
+            const survTime = Math.floor(a.survivalTime || 0);
+            return `<div style="display:flex;justify-content:space-between;padding:2px 0;${i===0?'color:#ffd700;':''}">${medal} ${aliveBadge} ${a.id.split('_')[1]} <span>⏱️${survTime}s 🥥${a.coconutsEaten||0}</span></div>`;
+        }).join('');
+    }
+}
+
+function getTimeOfDayName(t) {
+    if (t < 0.08) return '🌙 Night';
+    if (t < 0.15) return '🌅 Sunrise';
+    if (t < 0.35) return '🌤️ Morning';
+    if (t < 0.65) return '☀️ Midday';
+    if (t < 0.85) return '🌇 Afternoon';
+    if (t < 0.92) return '🌅 Sunset';
+    return '🌙 Night';
+}
+
+function runSanityChecks() {
+    logTest('Running sanity checks...', 'info');
+    let passed = 0, failed = 0;
+    
+    // Check trees exist and are grounded
+    allTrees.forEach((t, i) => {
+        if (t.mesh) {
+            const terrainY = getTerrainHeight(t.mesh.position.x, t.mesh.position.z);
+            if (Math.abs(t.mesh.position.y - terrainY) < 2) passed++;
+            else { failed++; logTest(`Tree ${i} floating/sinking`, 'error'); }
+        }
+    });
+    
+    // Check rocks exist and have stone
+    allRocks.forEach((r, i) => {
+        if (r.mesh && r.mesh.userData.stoneAmount >= 0) passed++;
+        else { failed++; logTest(`Rock ${i} invalid`, 'error'); }
+    });
+    
+    // Check bushes exist and have vines
+    allBushes.forEach((b, i) => {
+        if (b.mesh && b.mesh.userData.vineAmount >= 0) passed++;
+        else { failed++; logTest(`Bush ${i} invalid`, 'error'); }
+    });
+    
+    // Check sticks
+    groundSticks.forEach((s, i) => {
+        if (s.mesh) passed++;
+        else { failed++; logTest(`Stick ${i} invalid`, 'error'); }
+    });
+    
+    // Check agents have valid state
+    tribeMembers.forEach(a => {
+        // Check inventory is valid (no negative values)
+        const inv = a.inventory;
+        if (inv.coconuts >= 0 && inv.wood >= 0 && inv.stone >= 0 && inv.vines >= 0) passed++;
+        else { failed++; logTest(`${a.id} has negative inventory`, 'error'); }
+        
+        // Check needs are in range 0-1
+        if (a.hunger >= 0 && a.hunger <= 1 && a.energy >= 0 && a.energy <= 1) passed++;
+        else { failed++; logTest(`${a.id} needs out of range`, 'error'); }
+        
+        // Check no NaN values
+        if (!isNaN(a.hunger) && !isNaN(a.energy) && !isNaN(a.mesh.position.x)) passed++;
+        else { failed++; logTest(`${a.id} has NaN values`, 'error'); }
+        
+        // Check agent is grounded (not floating)
+        if (a.alive) {
+            const terrainY = getTerrainHeight(a.mesh.position.x, a.mesh.position.z);
+            if (Math.abs(a.mesh.position.y - terrainY) < 3) passed++;
+            else { failed++; logTest(`${a.id} floating/sinking`, 'error'); }
+        }
+    });
+    
+    // Check total inventory doesn't exceed max
+    tribeMembers.forEach(a => {
+        const total = getInventoryTotal(a.inventory);
+        if (total <= CONFIG.maxInventory) passed++;
+        else { failed++; logTest(`${a.id} inventory overflow: ${total}/${CONFIG.maxInventory}`, 'error'); }
+    });
+    
+    if (failed === 0) logTest(`✅ All ${passed} checks passed!`, 'success');
+    else logTest(`❌ ${failed}/${passed + failed} checks failed`, 'error');
+    return { passed, failed };
+}
+
+// Speed stability test
+function runSpeedTest() {
+    logTest('Running speed test...', 'info');
+    const speeds = [1, 5, 10, 20];
+    let allPassed = true;
+    
+    speeds.forEach(speed => {
+        const originalSpeed = CONFIG.simulationSpeed;
+        CONFIG.simulationSpeed = speed;
+        
+        // Run a few steps at this speed
+        for (let i = 0; i < 10; i++) {
+            stepSimulation(CONFIG.fixedTimestep);
+        }
+        
+        // Check for issues
+        let hasIssue = false;
+        tribeMembers.forEach(a => {
+            if (isNaN(a.hunger) || isNaN(a.energy) || isNaN(a.mesh.position.x)) {
+                hasIssue = true;
+            }
+        });
+        
+        if (hasIssue) {
+            logTest(`Speed ${speed}x: FAILED (NaN detected)`, 'error');
+            allPassed = false;
+        } else {
+            logTest(`Speed ${speed}x: OK`, 'success');
+        }
+        
+        CONFIG.simulationSpeed = originalSpeed;
+    });
+    
+    return allPassed;
+}
+
+// ============================================
+// INITIALIZATION
+// ============================================
+function init() {
+    updateLoadingProgress(5);
+    logTest('Initializing scene...', 'info');
+    resetSeed(CONFIG.seed);
+    
+    initAudio();
+    
+    scene = new THREE.Scene();
+    clock = new THREE.Clock();
+    
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 8000);
+    camera.position.set(350, 150, 350);
+    
+    updateLoadingProgress(10);
+    
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.5;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+    
+    updateLoadingProgress(20);
+    
+    createLighting();
+    createSky();
+    createWater();
+    createMist();
+    createMountains();
+    updateLoadingProgress(50);
+    
+    createIsland();
+    updateLoadingProgress(60);
+    
+    createPalmTrees();
+    createJungleTrees();
+    updateLoadingProgress(75);
+    
+    createRocks();
+    createBushes();
+    createGrassPatches();
+    createGroundSticks();
+    createFish();
+    updateLoadingProgress(85);
+    
+    // Stash position snapped exactly to terrain at center
+    STASH_POSITION.y = getTerrainHeight(0, 0);
+    createTownHall();
+    
+    createTribeMembers();
+    updateLoadingProgress(95);
+    
+    setupControls();
+    setupGUI();
+    window.addEventListener('resize', onResize);
+    
+    // Keep default timeOfDay from CONFIG (0.26)
+    updateTimeOfDay();
+    
+    setTimeout(() => runSanityChecks(), 500);
+    
+    updateLoadingProgress(100);
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('hidden');
+        logTest('Simulation started at sunrise', 'success');
+    }, 600);
+    
+    animate();
+}
+
+function updateLoadingProgress(p) {
+    const el = document.getElementById('loading-progress');
+    if (el) el.style.width = `${p}%`;
+}
+
+// ============================================
+// LIGHTING
+// ============================================
+function createLighting() {
+    ambientLight = new THREE.AmbientLight(0xffe8d0, 0.4);
+    scene.add(ambientLight);
+    
+    hemiLight = new THREE.HemisphereLight(0xffaa77, 0x445522, 0.6);
+    scene.add(hemiLight);
+    
+    // Slightly stronger base intensity so the sun disk in the sky feels bigger/brighter
+    sun = new THREE.DirectionalLight(0xffaa55, 2.4);
+    sun.position.set(150, 80, 150);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 2048;
+    sun.shadow.mapSize.height = 2048;
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 600;
+    sun.shadow.camera.left = -250;
+    sun.shadow.camera.right = 250;
+    sun.shadow.camera.top = 250;
+    sun.shadow.camera.bottom = -250;
+    sun.shadow.bias = -0.0003;
+    sun.shadow.normalBias = 0.02; // Reduces shadow acne
+    scene.add(sun);
+    
+    fillLight = new THREE.DirectionalLight(0x88aacc, 0.3);
+    fillLight.position.set(-100, 80, -100);
+    scene.add(fillLight);
+}
+
+// Time of day keyframes for smooth interpolation - ENHANCED SUNRISE/SUNSET
+const timeKeyframes = [
+    // Night
+    { t: 0.00, sunColor: 0x111122, sunInt: 0.02, ambColor: 0x05060a, ambInt: 0.06, exposure: 0.05, bgColor: 0x020308, rayleigh: 0.2, turbidity: 1 },
+    { t: 0.08, sunColor: 0x111122, sunInt: 0.02, ambColor: 0x05060a, ambInt: 0.06, exposure: 0.05, bgColor: 0x020308, rayleigh: 0.2, turbidity: 1 },
+    // Dawn - purple/pink horizon
+    { t: 0.12, sunColor: 0xff2200, sunInt: 0.6, ambColor: 0xff6688, ambInt: 0.2, exposure: 0.28, bgColor: 0xdd4466, rayleigh: 5, turbidity: 15 },
+    // Sunrise - orange/gold explosion
+    { t: 0.16, sunColor: 0xff4400, sunInt: 1.0, ambColor: 0xffaa66, ambInt: 0.32, exposure: 0.42, bgColor: 0xff7744, rayleigh: 4.5, turbidity: 14 },
+    { t: 0.20, sunColor: 0xff6600, sunInt: 1.4, ambColor: 0xffcc88, ambInt: 0.4, exposure: 0.52, bgColor: 0xffaa66, rayleigh: 3.5, turbidity: 12 },
+    // Golden hour morning
+    { t: 0.26, sunColor: 0xffbb44, sunInt: 1.6, ambColor: 0xffeebb, ambInt: 0.48, exposure: 0.65, bgColor: 0xffddb0, rayleigh: 3, turbidity: 10 },
+    // Morning
+    { t: 0.35, sunColor: 0xfff5e0, sunInt: 1.9, ambColor: 0xfff8f0, ambInt: 0.55, exposure: 0.78, bgColor: 0xd0e8ff, rayleigh: 2.2, turbidity: 8 },
+    // Midday
+    { t: 0.50, sunColor: 0xffffff, sunInt: 2.3, ambColor: 0xffffff, ambInt: 0.62, exposure: 0.88, bgColor: 0x85c0ff, rayleigh: 2, turbidity: 7 },
+    // Afternoon
+    { t: 0.65, sunColor: 0xfff5e0, sunInt: 1.9, ambColor: 0xfff8f0, ambInt: 0.55, exposure: 0.78, bgColor: 0xd0e8ff, rayleigh: 2.2, turbidity: 8 },
+    // Golden hour evening
+    { t: 0.74, sunColor: 0xffbb44, sunInt: 1.6, ambColor: 0xffeebb, ambInt: 0.48, exposure: 0.65, bgColor: 0xffddb0, rayleigh: 3, turbidity: 10 },
+    // Sunset - dramatic orange/red
+    { t: 0.80, sunColor: 0xff6600, sunInt: 1.4, ambColor: 0xffcc88, ambInt: 0.4, exposure: 0.52, bgColor: 0xffaa66, rayleigh: 3.5, turbidity: 12 },
+    { t: 0.84, sunColor: 0xff4400, sunInt: 1.0, ambColor: 0xffaa66, ambInt: 0.32, exposure: 0.42, bgColor: 0xff7744, rayleigh: 4.5, turbidity: 14 },
+    // Dusk - purple/pink horizon
+    { t: 0.88, sunColor: 0xff2200, sunInt: 0.6, ambColor: 0xff6688, ambInt: 0.2, exposure: 0.28, bgColor: 0xdd4466, rayleigh: 5, turbidity: 15 },
+    // Twilight to night
+    { t: 0.92, sunColor: 0x111122, sunInt: 0.02, ambColor: 0x05060a, ambInt: 0.06, exposure: 0.05, bgColor: 0x020308, rayleigh: 0.2, turbidity: 1 },
+    { t: 1.00, sunColor: 0x111122, sunInt: 0.02, ambColor: 0x05060a, ambInt: 0.06, exposure: 0.05, bgColor: 0x020308, rayleigh: 0.2, turbidity: 1 }
+];
+
+function lerpColor(c1, c2, t) {
+    const r1 = (c1 >> 16) & 255, g1 = (c1 >> 8) & 255, b1 = c1 & 255;
+    const r2 = (c2 >> 16) & 255, g2 = (c2 >> 8) & 255, b2 = c2 & 255;
+    const r = Math.round(r1 + (r2 - r1) * t);
+    const g = Math.round(g1 + (g2 - g1) * t);
+    const b = Math.round(b1 + (b2 - b1) * t);
+    return (r << 16) | (g << 8) | b;
+}
+
+function updateTimeOfDay() {
+    const t = CONFIG.timeOfDay;
+    
+    // Find surrounding keyframes
+    let k1 = timeKeyframes[0], k2 = timeKeyframes[1];
+    for (let i = 0; i < timeKeyframes.length - 1; i++) {
+        if (t >= timeKeyframes[i].t && t <= timeKeyframes[i + 1].t) {
+            k1 = timeKeyframes[i];
+            k2 = timeKeyframes[i + 1];
+            break;
+        }
+    }
+    
+    // Smooth interpolation factor
+    const range = k2.t - k1.t;
+    const lerp = range > 0 ? (t - k1.t) / range : 0;
+    const smoothLerp = lerp * lerp * (3 - 2 * lerp); // Smoothstep
+    
+    // Interpolate all values
+    const sunColor = lerpColor(k1.sunColor, k2.sunColor, smoothLerp);
+    const sunIntensity = k1.sunInt + (k2.sunInt - k1.sunInt) * smoothLerp;
+    const ambientColor = lerpColor(k1.ambColor, k2.ambColor, smoothLerp);
+    const ambientIntensity = k1.ambInt + (k2.ambInt - k1.ambInt) * smoothLerp;
+    const exposure = k1.exposure + (k2.exposure - k1.exposure) * smoothLerp;
+    const bgColor = lerpColor(k1.bgColor, k2.bgColor, smoothLerp);
+    const rayleigh = k1.rayleigh + (k2.rayleigh - k1.rayleigh) * smoothLerp;
+    const turbidity = k1.turbidity + (k2.turbidity - k1.turbidity) * smoothLerp;
+    
+    // Smooth sun position
+    const sunAngle = (t - 0.25) * Math.PI * 2;
+    const sunElevation = Math.sin(t * Math.PI) * 0.8 + 0.2;
+    const sunDist = 300;
+    
+    sun.position.set(Math.cos(sunAngle) * sunDist, sunElevation * 250 + 30, Math.sin(sunAngle) * sunDist);
+    sun.color.setHex(sunColor);
+    sun.intensity = sunIntensity;
+    ambientLight.color.setHex(ambientColor);
+    ambientLight.intensity = ambientIntensity;
+    renderer.toneMappingExposure = exposure;
+    scene.background = new THREE.Color(bgColor);
+    
+    // Update sky
+    if (sky) {
+        const phi = THREE.MathUtils.degToRad(90 - sunElevation * 70);
+        const theta = sunAngle;
+        const sunPos = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+        sky.material.uniforms['sunPosition'].value.copy(sunPos);
+        sky.material.uniforms['rayleigh'].value = rayleigh;
+        sky.material.uniforms['turbidity'].value = turbidity;
+    }
+    
+    if (water) {
+        water.material.uniforms['sunDirection'].value.copy(sun.position).normalize();
+        
+        // Make water brighter/more cyan in the day and darker/deeper at night
+        const dayColor = new THREE.Color(0x00cfff);
+        const nightColor = new THREE.Color(0x002244);
+        const isNight = (t < 0.08 || t > 0.92);
+        const nightFactor = isNight ? 1 : t < 0.25 ? (0.25 - t) / 0.25 : t > 0.75 ? (t - 0.75) / 0.25 : 0;
+        const waterColor = dayColor.clone().lerp(nightColor, nightFactor);
+        water.material.uniforms['waterColor'].value.copy(waterColor);
+    }
+}
+
+// ============================================
+// SKY
+// ============================================
+function createSky() {
+    sky = new Sky();
+    sky.scale.setScalar(15000);
+    scene.add(sky);
+    
+    const u = sky.material.uniforms;
+    u['turbidity'].value = 12;
+    u['rayleigh'].value = 4;
+    u['mieCoefficient'].value = 0.005;
+    u['mieDirectionalG'].value = 0.8;
+}
+
+// ============================================
+// DISTANT MOUNTAINS - LANDSCAPE WITH MOUNTAIN RANGES
+// ============================================
+function createMountains() {
+    const mountainGroup = new THREE.Group();
+    mountainGroup.name = 'mountains';
+    
+    // Material for subtle silhouette mountains (no reflections, no lighting)
+    function getMountainMaterial(lightness = 0.4, opacity = 0.25) {
+        return new THREE.MeshBasicMaterial({
+            color: new THREE.Color().setHSL(0.58, 0.12, lightness),
+            transparent: true,
+            opacity: opacity,
+            fog: true,
+            side: THREE.FrontSide,
+            depthWrite: false // Prevents water reflections
+        });
+    }
+    
+    // Create a more detailed mountain peak
+    function createMountainPeak(baseWidth, height, segments = 12) {
+        const geo = new THREE.ConeGeometry(baseWidth, height, segments, 2);
+        // Add some noise to vertices for natural look
+        const pos = geo.attributes.position.array;
+        for (let i = 0; i < pos.length; i += 3) {
+            const y = pos[i + 1];
+            if (y < height * 0.9) { // Don't distort tip
+                pos[i] += (seededRandom() - 0.5) * baseWidth * 0.15;
+                pos[i + 2] += (seededRandom() - 0.5) * baseWidth * 0.15;
+            }
+        }
+        geo.computeVertexNormals();
+        return geo;
+    }
+    
+    // === CREATE 4-5 MOUNTAIN RANGES (each with multiple peaks) ===
+    const ranges = [
+        { startAngle: 0.0, peaks: 4, baseDist: 6000, spread: 0.5 },
+        { startAngle: 1.2, peaks: 3, baseDist: 8000, spread: 0.4 },
+        { startAngle: 2.5, peaks: 5, baseDist: 5500, spread: 0.6 },
+        { startAngle: 4.0, peaks: 3, baseDist: 9000, spread: 0.35 },
+        { startAngle: 5.2, peaks: 4, baseDist: 7000, spread: 0.45 }
+    ];
+    
+    let totalPeaks = 0;
+    
+    ranges.forEach((range, rangeIdx) => {
+        // Distance variation for this range
+        const rangeDist = range.baseDist + seededRandom() * 2000;
+        const rangeOpacity = Math.max(0.12, 0.3 - (rangeDist - 5000) / 25000);
+        const rangeLightness = 0.4 + (rangeDist - 5000) / 40000;
+        
+        for (let p = 0; p < range.peaks; p++) {
+            const peakAngle = range.startAngle + (p / range.peaks) * range.spread + seededRandom() * 0.08;
+            const peakDist = rangeDist + (seededRandom() - 0.5) * 1500;
+            
+            // Primary peak
+            const height = 150 + seededRandom() * 200;
+            const width = 300 + seededRandom() * 400;
+            
+            const geo = createMountainPeak(width, height, 10);
+            const mesh = new THREE.Mesh(geo, getMountainMaterial(rangeLightness, rangeOpacity));
+            mesh.position.set(
+                Math.cos(peakAngle) * peakDist,
+                height * 0.35,
+                Math.sin(peakAngle) * peakDist
+            );
+            mesh.castShadow = false;
+            mesh.receiveShadow = false;
+            mountainGroup.add(mesh);
+            totalPeaks++;
+            
+            // Add 1-3 sub-peaks for each main peak
+            const subPeaks = 1 + Math.floor(seededRandom() * 3);
+            for (let s = 0; s < subPeaks; s++) {
+                const subAngle = peakAngle + (seededRandom() - 0.5) * 0.12;
+                const subDist = peakDist + (seededRandom() - 0.5) * 800;
+                const subHeight = height * (0.4 + seededRandom() * 0.4);
+                const subWidth = width * (0.35 + seededRandom() * 0.35);
+                
+                const subGeo = createMountainPeak(subWidth, subHeight, 8);
+                const subMesh = new THREE.Mesh(subGeo, getMountainMaterial(rangeLightness + 0.03, rangeOpacity * 0.7));
+                subMesh.position.set(
+                    Math.cos(subAngle) * subDist,
+                    subHeight * 0.3,
+                    Math.sin(subAngle) * subDist
+                );
+                subMesh.castShadow = false;
+                subMesh.receiveShadow = false;
+                mountainGroup.add(subMesh);
+                totalPeaks++;
+            }
+        }
+    });
+    
+    // One large distant island/mountain
+    const bigDist = 12000;
+    const bigHeight = 400;
+    const bigWidth = 800;
+    const bigGeo = createMountainPeak(bigWidth, bigHeight, 14);
+    const bigMesh = new THREE.Mesh(bigGeo, getMountainMaterial(0.5, 0.15));
+    bigMesh.position.set(bigDist * 0.7, bigHeight * 0.3, bigDist * 0.7);
+    bigMesh.castShadow = false;
+    bigMesh.receiveShadow = false;
+    mountainGroup.add(bigMesh);
+    
+    scene.add(mountainGroup);
+    logTest(`Created ${totalPeaks} mountain peaks in ${ranges.length} ranges`, 'info');
+}
+
+// ============================================
+// FALLING COCONUTS SYSTEM - WITH SHAKE & CAP
+// ============================================
+let fallingCoconuts = [];
+let shakingCoconuts = []; // Coconuts shaking before falling
+let groundCoconuts = []; // Track coconuts on ground
+const MAX_GROUND_COCONUTS = 30; // CAP - coconuts despawn if too many
+const SHAKE_DURATION = 0.6; // Shake for 0.6 seconds before falling
+
+function dropCoconut(tree, agentPosition) {
+    // Find a coconut on the tree to shake
+    const coconuts = tree.children.filter(c => c.userData.isCoconut);
+    if (coconuts.length === 0) return;
+    
+    playSound('coconut_drop', 0.2);
+    
+    const coconut = coconuts[0];
+    const startPos = coconut.position.clone();
+    const worldPos = new THREE.Vector3();
+    coconut.getWorldPosition(worldPos);
+    
+    // Remove from tree, add to shaking list
+    tree.remove(coconut);
+    
+    // Create BIGGER, more visible falling coconut
+    const coconutMat = new THREE.MeshStandardMaterial({ 
+        color: 0x8b5a2b, 
+        roughness: 0.7,
+        emissive: 0x332211,
+        emissiveIntensity: 0.1
+    });
+    const coconutGeo = new THREE.SphereGeometry(0.7, 12, 12); // Bigger!
+    const fallingCoconut = new THREE.Mesh(coconutGeo, coconutMat);
+    fallingCoconut.position.copy(worldPos);
+    fallingCoconut.castShadow = true;
+    fallingCoconut.scale.set(1.2, 0.9, 1.2); // Slightly squashed shape
+    scene.add(fallingCoconut);
+    
+    // Start shaking
+    shakingCoconuts.push({
+        mesh: fallingCoconut,
+        tree: tree,
+        startPos: worldPos.clone(),
+        shakeTime: 0,
+        targetAgent: agentPosition
+    });
+    
+    logTest(`🥥 Coconut falling from tree!`, 'info');
+}
+
+function updateShakingCoconuts(delta) {
+    for (let i = shakingCoconuts.length - 1; i >= 0; i--) {
+        const sc = shakingCoconuts[i];
+        sc.shakeTime += delta;
+        
+        // Shake animation - wobble back and forth
+        const shakeIntensity = 0.15 * (1 - sc.shakeTime / SHAKE_DURATION); // Decrease over time
+        const shakeSpeed = 25; // Fast shake
+        sc.mesh.position.x = sc.startPos.x + Math.sin(sc.shakeTime * shakeSpeed) * shakeIntensity;
+        sc.mesh.position.z = sc.startPos.z + Math.cos(sc.shakeTime * shakeSpeed * 1.3) * shakeIntensity;
+        sc.mesh.position.y = sc.startPos.y + Math.sin(sc.shakeTime * shakeSpeed * 0.7) * shakeIntensity * 0.5;
+        
+        // Rotate while shaking
+        sc.mesh.rotation.x += delta * 10;
+        sc.mesh.rotation.z += delta * 7;
+        
+        // After shake duration, start falling
+        if (sc.shakeTime >= SHAKE_DURATION) {
+            // Transfer to falling coconuts
+            fallingCoconuts.push({
+                mesh: sc.mesh,
+                velocity: new THREE.Vector3(
+                    (seededRandom() - 0.5) * 3,
+                    0,
+                    (seededRandom() - 0.5) * 3
+                ),
+                targetAgent: sc.targetAgent,
+                bounces: 0
+            });
+            shakingCoconuts.splice(i, 1);
+        }
+    }
+}
+
+// Drop a coconut at a position (when agent drops it)
+function dropCoconutAtPosition(x, z) {
+    const y = getTerrainHeight(x, z);
+    
+    const coconutMat = new THREE.MeshStandardMaterial({ 
+        color: 0x8b4513, 
+        roughness: 0.6,
+        emissive: 0x442211,
+        emissiveIntensity: 0.3
+    });
+    const coconutGeo = new THREE.SphereGeometry(0.5, 10, 10);
+    const coconut = new THREE.Mesh(coconutGeo, coconutMat);
+    coconut.position.set(x + (seededRandom() - 0.5) * 0.5, y + 0.5, z + (seededRandom() - 0.5) * 0.5);
+    coconut.castShadow = true;
+    coconut.scale.set(1.1, 0.85, 1.1);
+    scene.add(coconut);
+    
+    // Add directly to ground coconuts
+    groundCoconuts.push({
+        mesh: coconut,
+        age: 0,
+        spawnTime: Date.now()
+    });
+}
+
+function updateFallingCoconuts(delta) {
+    const gravity = -30;
+    const bounceDamping = 0.35;
+    
+    for (let i = fallingCoconuts.length - 1; i >= 0; i--) {
+        const fc = fallingCoconuts[i];
+        
+        // Apply gravity
+        fc.velocity.y += gravity * delta;
+        
+        // Move coconut
+        fc.mesh.position.x += fc.velocity.x * delta;
+        fc.mesh.position.y += fc.velocity.y * delta;
+        fc.mesh.position.z += fc.velocity.z * delta;
+        
+        // Rotate while falling
+        fc.mesh.rotation.x += delta * 8;
+        fc.mesh.rotation.z += delta * 5;
+        
+        // Check ground collision - prevent glitching through floor
+        const groundY = getTerrainHeight(fc.mesh.position.x, fc.mesh.position.z);
+        if (fc.mesh.position.y <= groundY + 0.5) {
+            fc.mesh.position.y = groundY + 0.5;
+            fc.velocity.y = -fc.velocity.y * bounceDamping;
+            fc.velocity.x *= 0.6;
+            fc.velocity.z *= 0.6;
+            fc.bounces++;
+            
+            // After 2 bounces, coconut settles on ground
+            if (fc.bounces >= 2 || Math.abs(fc.velocity.y) < 0.5) {
+                // Add to ground coconuts
+                groundCoconuts.push({
+                    mesh: fc.mesh,
+                    spawnTime: Date.now()
+                });
+                fallingCoconuts.splice(i, 1);
+                
+                // ENFORCE CAP - remove oldest if over limit
+                while (groundCoconuts.length > MAX_GROUND_COCONUTS) {
+                    const oldest = groundCoconuts.shift();
+                    scene.remove(oldest.mesh);
+                }
+            }
+        }
+    }
+    
+    // Ground coconuts persist until picked up (infinite coconut system)
+    // Only despawn if there are way too many (> 50)
+    if (groundCoconuts.length > 50) {
+        const oldest = groundCoconuts.shift();
+        scene.remove(oldest.mesh);
+    }
+}
+
+// ============================================
+// MIST - IMPROVED FOG SYSTEM
+// ============================================
+let mistPlanes = [];
+function createMist() {
+    // Distance fog with better density
+    scene.fog = new THREE.FogExp2(0xc8d8e8, 0.00015);
+    
+    // Subtle ground-level mist only (removed blocking mid-level planes)
+    const mistMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.04,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
+    
+    // Single subtle ground mist
+    const mistGeo = new THREE.PlaneGeometry(CONFIG.islandRadius * 8, CONFIG.islandRadius * 8);
+    const mist = new THREE.Mesh(mistGeo, mistMat);
+    mist.rotation.x = -Math.PI / 2;
+    mist.position.y = 2;
+    scene.add(mist);
+    mistPlanes.push(mist);
+}
+
+// ============================================
+// WATER - VERY BLUE WITH CLEAR DEPTH ZONES
+// ============================================
+function createWater() {
+    const geo = new THREE.PlaneGeometry(12000, 12000);
+    
+    water = new Water(geo, {
+        textureWidth: 512,
+        textureHeight: 512,
+        waterNormals: new THREE.TextureLoader().load(
+            'https://threejs.org/examples/textures/waternormals.jpg',
+            tex => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
+        ),
+        sunDirection: new THREE.Vector3(0.5, 0.5, 0.5),
+        sunColor: 0xffffff,
+        // Push water to extremely bright tropical cyan – most of the color comes from this
+        waterColor: 0x00cfff,
+        distortionScale: 3.5,
+        fog: true,
+        alpha: 0.9
+    });
+    
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = CONFIG.waterLevel;
+    scene.add(water);
+    
+    // Deep ocean floor - very dark blue for absorption effect (helps make surface pop)
+    const floorGeo = new THREE.PlaneGeometry(12000, 12000);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x000614, roughness: 1 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -40;
+    scene.add(floor);
+    
+    // DEPTH ZONES - Volumetric absorption effect (darker = deeper)
+    
+    // 1. Beach shallows - crystal clear turquoise (very bright)
+    const shallowGeo = new THREE.RingGeometry(CONFIG.islandRadius * 0.9, CONFIG.islandRadius * 1.08, 128);
+    const shallowMat = new THREE.MeshBasicMaterial({ 
+        color: 0x40e8d8, // Bright turquoise
+        transparent: true, 
+        opacity: 0.30,
+        side: THREE.DoubleSide
+    });
+    const shallow = new THREE.Mesh(shallowGeo, shallowMat);
+    shallow.rotation.x = -Math.PI / 2;
+    shallow.position.y = -0.8;
+    scene.add(shallow);
+    
+    // 2. Lagoon - tropical blue-green
+    const lagoonGeo = new THREE.RingGeometry(CONFIG.islandRadius * 1.08, CONFIG.islandRadius * 1.3, 128);
+    const lagoonMat = new THREE.MeshBasicMaterial({ 
+        color: 0x20b0a0, // Tropical teal
+        transparent: true, 
+        opacity: 0.40,
+        side: THREE.DoubleSide
+    });
+    const lagoon = new THREE.Mesh(lagoonGeo, lagoonMat);
+    lagoon.rotation.x = -Math.PI / 2;
+    lagoon.position.y = -2;
+    scene.add(lagoon);
+    
+    // 3. Medium depth - rich ocean blue (noticeably darker)
+    const mediumGeo = new THREE.RingGeometry(CONFIG.islandRadius * 1.3, CONFIG.islandRadius * 2, 128);
+    const mediumMat = new THREE.MeshBasicMaterial({ 
+        color: 0x0f4a92, // Darker ocean blue
+        transparent: true, 
+        opacity: 0.6,
+        side: THREE.DoubleSide
+    });
+    const medium = new THREE.Mesh(mediumGeo, mediumMat);
+    medium.rotation.x = -Math.PI / 2;
+    medium.position.y = -4;
+    scene.add(medium);
+    
+    // 4. Deep water - darker absorption
+    const deepGeo = new THREE.RingGeometry(CONFIG.islandRadius * 2, CONFIG.islandRadius * 4, 128);
+    const deepMat = new THREE.MeshBasicMaterial({ 
+        color: 0x052c66, // Very deep blue
+        transparent: true, 
+        opacity: 0.7,
+        side: THREE.DoubleSide
+    });
+    const deep = new THREE.Mesh(deepGeo, deepMat);
+    deep.rotation.x = -Math.PI / 2;
+    deep.position.y = -8;
+    scene.add(deep);
+    
+    // 5. Abyss - very dark, light absorption (almost black)
+    const abyssGeo = new THREE.RingGeometry(CONFIG.islandRadius * 4, CONFIG.islandRadius * 8, 128);
+    const abyssMat = new THREE.MeshBasicMaterial({ 
+        color: 0x020816, // Near-black blue
+        transparent: true, 
+        opacity: 0.8,
+        side: THREE.DoubleSide
+    });
+    const abyss = new THREE.Mesh(abyssGeo, abyssMat);
+    abyss.rotation.x = -Math.PI / 2;
+    abyss.position.y = -15;
+    scene.add(abyss);
+}
+
+// ============================================
+// ISLAND TERRAIN - BIGGER WITH SMOOTH BEACH
+// ============================================
+function createIsland() {
+    const res = 150;
+    const size = CONFIG.islandRadius * 2.8;
+    const geo = new THREE.PlaneGeometry(size, size, res, res);
+    const pos = geo.attributes.position.array;
+    const colors = [];
+    
+    for (let i = 0; i < pos.length; i += 3) {
+        const x = pos[i], z = pos[i + 1];
+        const h = getTerrainHeight(x, z);
+        pos[i + 2] = h;
+        
+        let color;
+        if (h < 0.8) {
+            // Underwater sand
+            color = new THREE.Color(0xb09060);
+        } else if (h < 2) {
+            // Wet sand
+            color = new THREE.Color(0xd4b896);
+        } else if (h < 4) {
+            // Dry beach sand
+            const v = seededRandom() * 0.04;
+            color = new THREE.Color(0.95 + v, 0.88 + v, 0.68 + v);
+        } else if (h < 7) {
+            // Grass transition
+            const v = seededRandom() * 0.05;
+            color = new THREE.Color(0.5 + v, 0.72 + v, 0.32);
+        } else {
+            // Dense jungle
+            const v = seededRandom() * 0.08;
+            color = new THREE.Color(0.15 + v, 0.45 + v, 0.1);
+        }
+        colors.push(color.r, color.g, color.b);
+    }
+    
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+    island = new THREE.Mesh(geo, mat);
+    island.rotation.x = -Math.PI / 2;
+    island.receiveShadow = true;
+    scene.add(island);
+}
+
+// Simple town hall / stash marker at island center
+function createTownHall() {
+    // Make it chunky and clearly above ground
+    const baseHeight = 2;
+    const baseGeo = new THREE.CylinderGeometry(3, 3.4, baseHeight, 20);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x704225, roughness: 0.8 });
+    const base = new THREE.Mesh(baseGeo, baseMat);
+    // Center so the cylinder bottom sits exactly on terrain at center
+    base.position.set(STASH_POSITION.x, STASH_POSITION.y + baseHeight * 0.5, STASH_POSITION.z);
+    base.receiveShadow = true;
+    base.castShadow = true;
+    
+    const roofHeight = 2.2;
+    const roofGeo = new THREE.ConeGeometry(4, roofHeight, 20);
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0xffe08a, roughness: 0.6 });
+    const roof = new THREE.Mesh(roofGeo, roofMat);
+    roof.position.y = baseHeight * 0.5 + roofHeight * 0.5;
+    base.add(roof);
+    
+    base.userData.isStash = true;
+    townHallMesh = base;
+    
+    // Simple piles on the roof for each resource type (start empty, scaled up as stash fills)
+    const pileGeo = new THREE.BoxGeometry(0.6, 0.2, 0.6);
+    const coconutMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.8 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x6B4423, roughness: 0.9 });
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.9 });
+    const vineMat = new THREE.MeshStandardMaterial({ color: 0x2d7b2d, roughness: 0.9 });
+    const fishMat = new THREE.MeshStandardMaterial({ color: 0x4ecdc4, roughness: 0.7, metalness: 0.2 });
+    
+    stashVisuals.coconuts = new THREE.Mesh(pileGeo, coconutMat);
+    stashVisuals.wood = new THREE.Mesh(pileGeo, woodMat);
+    stashVisuals.stone = new THREE.Mesh(pileGeo, stoneMat);
+    stashVisuals.vines = new THREE.Mesh(pileGeo, vineMat);
+    stashVisuals.fish = new THREE.Mesh(pileGeo, fishMat);
+    
+    const piles = [stashVisuals.coconuts, stashVisuals.wood, stashVisuals.stone, stashVisuals.vines, stashVisuals.fish];
+    const offsets = [
+        { x: -1.2, z: -0.8 },
+        { x: 1.2, z: -0.8 },
+        { x: -1.2, z: 0.8 },
+        { x: 1.2, z: 0.8 },
+        { x: 0, z: 0 }
+    ];
+    piles.forEach((mesh, i) => {
+        mesh.position.set(offsets[i].x, roofHeight * 0.1, offsets[i].z);
+        mesh.scale.setScalar(0.0001); // start almost invisible
+        roof.add(mesh);
+    });
+    
+    // Canvas-based label above town hall, like a big floating HUD
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    stashVisuals.labelCanvas = canvas;
+    stashVisuals.labelCtx = ctx;
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.encoding = THREE.sRGBEncoding;
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(6, 2.2, 1);
+    sprite.position.set(STASH_POSITION.x, STASH_POSITION.y + baseHeight + roofHeight + 1.0, STASH_POSITION.z);
+    stashVisuals.labelSprite = sprite;
+    stashVisuals.labelTexture = texture;
+    scene.add(sprite);
+    
+    // Initial draw
+    updateStashLabel();
+    
+    scene.add(base);
+    
+    logTest('🏠 Town Hall / shared stash created at island center', 'info');
+}
+
+function updateStashVisuals() {
+    if (!stashVisuals.coconuts) return;
+    const scaleFromAmount = (amt, maxAmt = 30) => 0.2 + Math.min(amt / maxAmt, 1) * 1.4;
+    
+    stashVisuals.coconuts.scale.setScalar(sharedStash.coconuts > 0 ? scaleFromAmount(sharedStash.coconuts) : 0.0001);
+    stashVisuals.wood.scale.setScalar(sharedStash.wood > 0 ? scaleFromAmount(sharedStash.wood) : 0.0001);
+    stashVisuals.stone.scale.setScalar(sharedStash.stone > 0 ? scaleFromAmount(sharedStash.stone) : 0.0001);
+    stashVisuals.vines.scale.setScalar(sharedStash.vines > 0 ? scaleFromAmount(sharedStash.vines) : 0.0001);
+    
+    const totalFish = sharedStash.mullet + sharedStash.parrotfish + sharedStash.grouper;
+    stashVisuals.fish.scale.setScalar(totalFish > 0 ? scaleFromAmount(totalFish) : 0.0001);
+    
+    updateStashLabel();
+}
+
+function updateStashLabel() {
+    const canvas = stashVisuals.labelCanvas;
+    const ctx = stashVisuals.labelCtx;
+    const texture = stashVisuals.labelTexture;
+    if (!canvas || !ctx || !texture) return;
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.font = '24px "SF Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    const cols = 5;
+    const colWidth = canvas.width / cols;
+    const centerYIcon = canvas.height * 0.25;
+    const centerYNum = canvas.height * 0.5;
+    const centerYName = canvas.height * 0.78;
+    
+    const entries = [
+        { icon: '🥥', value: sharedStash.coconuts, label: 'Coconuts' },
+        { icon: '🪵', value: sharedStash.wood, label: 'Wood' },
+        { icon: '🪨', value: sharedStash.stone, label: 'Stone' },
+        { icon: '🌿', value: sharedStash.vines, label: 'Vines' },
+        { icon: '🐟', value: sharedStash.mullet + sharedStash.parrotfish + sharedStash.grouper, label: 'Fish' }
+    ];
+    
+    entries.forEach((e, i) => {
+        const cx = colWidth * (i + 0.5);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(e.icon, cx, centerYIcon);
+        ctx.fillText(String(e.value || 0), cx, centerYNum);
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillText(e.label, cx, centerYName);
+    });
+    
+    texture.needsUpdate = true;
+}
+
+// Find nearest visible fish up to a given tier
+function findNearestFish(agent, maxTier = 1) {
+    let best = null;
+    let bestDist = Infinity;
+    const ax = agent.mesh.position.x;
+    const az = agent.mesh.position.z;
+    
+    fishList.forEach(f => {
+        if (!f.alive) return;
+        if (f.tier > maxTier) return;
+        const dx = f.mesh.position.x - ax;
+        const dz = f.mesh.position.z - az;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = f;
+        }
+    });
+    return best;
+}
+
+// ============================================
+// PALM TREES - ON BEACH AREA
+// ============================================
+
+// Teleport tree to random location on island
+function teleportTree() {
+    if (allTrees.length === 0) return;
+    
+    const tree = allTrees[0];
+    if (!tree || !tree.mesh) return;
+    
+    // Random position within island (not too close to water)
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 10 + Math.random() * (CONFIG.islandRadius * 0.5);
+    const newX = Math.cos(angle) * dist;
+    const newZ = Math.sin(angle) * dist;
+    const newY = getTerrainHeight(newX, newZ);
+    
+    // Only teleport if on land
+    if (newY > CONFIG.waterLevel + 2) {
+        tree.mesh.position.set(newX, newY - 0.3, newZ);
+        playSound('pickup', 0.3); // Teleport sound
+        logTest(`🌴 Tree teleported to new location!`, 'info');
+    }
+}
+
+function createPalmTrees() {
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
+    
+    // SPREAD TREES ACROSS ISLAND (beach and inland)
+    for (let i = 0; i < CONFIG.palmTreeCount; i++) {
+        const palm = createPalmTree(trunkMat, leafMat);
+        
+        // Place trees in a ring pattern with some randomness
+        const angle = (i / CONFIG.palmTreeCount) * Math.PI * 2 + seededRandom() * 0.5;
+        const dist = 20 + seededRandom() * (CONFIG.islandRadius * 0.6);
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        
+        // Only place if on land
+        if (y > CONFIG.waterLevel + 2) {
+            palm.position.set(x, y - 0.3, z);
+        } else {
+            // Fallback to center area
+            const safeAngle = seededRandom() * Math.PI * 2;
+            const safeDist = 15 + seededRandom() * 30;
+            palm.position.set(
+                Math.cos(safeAngle) * safeDist,
+                getTerrainHeight(Math.cos(safeAngle) * safeDist, Math.sin(safeAngle) * safeDist) - 0.3,
+                Math.sin(safeAngle) * safeDist
+            );
+        }
+        palm.rotation.y = seededRandom() * Math.PI * 2;
+        
+        palm.userData.isTree = true;
+        palm.userData.treeType = 'palm';
+        palm.userData.id = `palm_${i}`;
+        palm.userData.coconuts = 2 + Math.floor(seededRandom() * 2); // 2-3 coconuts per tree
+        
+        scene.add(palm);
+        allTrees.push({ mesh: palm, age: 1 });
+        addCoconutsToTree(palm);
+    }
+    logTest(`Created ${CONFIG.palmTreeCount} palm trees spread across island`, 'info');
+}
+
+function createPalmTree(trunkMat, leafMat) {
+    const tree = new THREE.Group();
+    const h = 14 + seededRandom() * 10; // MUCH TALLER: 14-24m
+    
+    // Curved trunk - THICKER
+    const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(seededRandom() * 2 - 1, h * 0.55, seededRandom() * 2 - 1),
+        new THREE.Vector3(seededRandom() * 1.5 - 0.75, h, seededRandom() * 1.5 - 0.75)
+    );
+    const trunkGeo = new THREE.TubeGeometry(curve, 16, 0.35, 8, false); // Thicker trunk
+    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+    trunk.castShadow = true;
+    tree.add(trunk);
+    
+    // Add trunk rings/segments for realism
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 1 });
+    for (let r = 0; r < h; r += 1.2) {
+        const ringT = r / h;
+        const ringPos = curve.getPoint(ringT);
+        const ringGeo = new THREE.TorusGeometry(0.4, 0.08, 4, 12);
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.position.copy(ringPos);
+        ring.rotation.x = Math.PI / 2;
+        tree.add(ring);
+    }
+    
+    // BIGGER crown of fronds
+    const crownGeo = new THREE.SphereGeometry(4.5, 12, 10); // Much bigger crown
+    const crown = new THREE.Mesh(crownGeo, leafMat);
+    crown.position.copy(curve.getPoint(1));
+    crown.scale.y = 0.35;
+    crown.castShadow = true;
+    tree.add(crown);
+    
+    // LONGER drooping fronds
+    for (let i = 0; i < 9; i++) {
+        const angle = (i / 9) * Math.PI * 2;
+        const frondGeo = new THREE.ConeGeometry(0.5, 7, 4); // Longer fronds
+        const frond = new THREE.Mesh(frondGeo, leafMat);
+        const tip = curve.getPoint(1);
+        frond.position.set(
+            tip.x + Math.cos(angle) * 3.5,
+            tip.y - 1.5,
+            tip.z + Math.sin(angle) * 3.5
+        );
+        frond.rotation.z = Math.PI / 2 + 0.4 + (seededRandom() - 0.5) * 0.3; // More droop
+        frond.rotation.y = angle;
+        frond.castShadow = true;
+        tree.add(frond);
+    }
+    
+    return tree;
+}
+
+function addCoconutsToTree(tree) {
+    const coconutMat = new THREE.MeshStandardMaterial({ color: 0x6b4020, roughness: 0.8 });
+    const coconutGeo = new THREE.SphereGeometry(0.5, 10, 10); // BIGGER coconuts
+    const count = tree.userData.coconuts || 0;
+    
+    // Find crown position (top of tree)
+    let crownY = 14;
+    tree.traverse(obj => {
+        if (obj.geometry?.type === 'SphereGeometry' && obj.position.y > 5) {
+            crownY = obj.position.y;
+        }
+    });
+    
+    for (let i = 0; i < count; i++) {
+        const coconut = new THREE.Mesh(coconutGeo, coconutMat);
+        const angle = (i / Math.max(count, 1)) * Math.PI * 2 + seededRandom() * 0.5;
+        coconut.position.set(
+            Math.cos(angle) * 1.2, // Spread out more
+            crownY - 2 - seededRandom() * 1,
+            Math.sin(angle) * 1.2
+        );
+        coconut.userData.isCoconut = true;
+        coconut.castShadow = true;
+        tree.add(coconut);
+    }
+}
+
+// ============================================
+// JUNGLE TREES - DENSE IN CENTER
+// ============================================
+function createJungleTrees() {
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
+    const canopyColors = [0x1a6b1a, 0x228b22, 0x2d7b2d, 0x1e8b1e, 0x156015, 0x0d5d0d];
+    
+    // Dense jungle in center, sparse toward beach
+    for (let i = 0; i < CONFIG.jungleTreeCount; i++) {
+        // Bias toward center - use square root for more central distribution
+        const rawDist = seededRandom();
+        const dist = CONFIG.islandRadius * 0.55 * Math.sqrt(rawDist); // Max 55% radius (jungle zone)
+        const angle = seededRandom() * Math.PI * 2;
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        
+        // Only place on elevated jungle terrain
+        if (y < 4) continue;
+        
+        const jungle = createJungleTree(trunkMat, canopyColors);
+        jungle.position.set(x, y - 0.3, z);
+        jungle.rotation.y = seededRandom() * Math.PI * 2;
+        jungle.userData.isTree = true;
+        jungle.userData.treeType = 'jungle';
+        jungle.userData.id = `jungle_${i}`;
+        
+        scene.add(jungle);
+        allTrees.push({ mesh: jungle, age: 1 });
+    }
+    logTest(`Created ${CONFIG.jungleTreeCount} jungle trees (dense in center)`, 'info');
+}
+
+function createJungleTree(trunkMat, colors) {
+    const tree = new THREE.Group();
+    const h = 8 + seededRandom() * 8;
+    
+    const trunkGeo = new THREE.CylinderGeometry(0.25, 0.45, h, 8);
+    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+    trunk.position.y = h / 2;
+    trunk.castShadow = true;
+    tree.add(trunk);
+    
+    const clusters = 3 + Math.floor(seededRandom() * 2);
+    for (let i = 0; i < clusters; i++) {
+        const size = 3 + seededRandom() * 3;
+        const canopyGeo = new THREE.SphereGeometry(size, 10, 8);
+        const canopyMat = new THREE.MeshStandardMaterial({ 
+            color: colors[Math.floor(seededRandom() * colors.length)], 
+            roughness: 0.8 
+        });
+        const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+        canopy.position.set(
+            (seededRandom() - 0.5) * 3,
+            h + size * 0.2 + i * 2,
+            (seededRandom() - 0.5) * 3
+        );
+        canopy.scale.y = 0.6;
+        canopy.castShadow = true;
+        tree.add(canopy);
+    }
+    
+    return tree;
+}
+
+// ============================================
+// ROCKS
+// ============================================
+function createRocks() {
+    for (let i = 0; i < CONFIG.rockCount; i++) {
+        // Some on beach, some inland - BIG visible rock formations
+        const isBeach = seededRandom() > 0.5;
+        const pos = isBeach ? getBeachPosition() : getRandomIslandPosition(15, CONFIG.islandRadius * 0.65, 3);
+        if (!pos) continue;
+        
+        // Create a rock cluster (multiple rocks together)
+        const rockCluster = createRockFormation();
+        const scale = 1.5 + seededRandom() * 2.0; // MUCH BIGGER rocks
+        rockCluster.position.set(pos.x, pos.y - 0.5, pos.z);
+        rockCluster.scale.setScalar(scale);
+        rockCluster.rotation.y = seededRandom() * Math.PI * 2;
+        rockCluster.userData.isRock = true;
+        rockCluster.userData.id = `rock_${i}`;
+        rockCluster.userData.resourceType = 'stone';
+        rockCluster.userData.stoneAmount = 5 + Math.floor(seededRandom() * 5); // 5-9 stone per formation
+        rockCluster.userData.respawnTime = 45000; // 45 seconds to respawn
+        scene.add(rockCluster);
+        allRocks.push({ mesh: rockCluster, stoneAmount: rockCluster.userData.stoneAmount });
+    }
+    logTest(`Created ${CONFIG.rockCount} rock formations (stone source)`, 'info');
+}
+
+// Create a cluster of rocks that looks like a mineable formation
+function createRockFormation() {
+    const group = new THREE.Group();
+    
+    // Main large boulder
+    const mainRock = createSingleRock(1.2);
+    mainRock.position.set(0, 0.5, 0);
+    group.add(mainRock);
+    
+    // 2-3 smaller rocks around it
+    const numSmaller = 2 + Math.floor(seededRandom() * 2);
+    for (let i = 0; i < numSmaller; i++) {
+        const smallRock = createSingleRock(0.4 + seededRandom() * 0.3);
+        const angle = (i / numSmaller) * Math.PI * 2 + seededRandom() * 0.5;
+        const dist = 1.0 + seededRandom() * 0.5;
+        smallRock.position.set(
+            Math.cos(angle) * dist,
+            0.2 + seededRandom() * 0.2,
+            Math.sin(angle) * dist
+        );
+        smallRock.rotation.y = seededRandom() * Math.PI;
+        group.add(smallRock);
+    }
+    
+    return group;
+}
+
+function createSingleRock(size = 1) {
+    // Use smooth sphere-based geometry for proper boulder look
+    const geo = new THREE.SphereGeometry(size, 8, 6);
+    const pos = geo.attributes.position.array;
+    
+    // Gentle displacement for natural rock look (not spiky!)
+    for (let i = 0; i < pos.length; i += 3) {
+        const noise = (seededRandom() - 0.5) * 0.15 * size;
+        pos[i] += noise;
+        pos[i + 1] += (seededRandom() - 0.5) * 0.1 * size;
+        pos[i + 2] += noise;
+    }
+    geo.computeVertexNormals();
+    
+    // Gray stone color with slight variation
+    const gray = 0.45 + seededRandom() * 0.15;
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: new THREE.Color(gray, gray * 0.95, gray * 0.92), 
+        roughness: 0.9,
+        metalness: 0.05
+    });
+    const rock = new THREE.Mesh(geo, mat);
+    // Flatten to boulder shape
+    rock.scale.set(
+        0.9 + seededRandom() * 0.3,
+        0.5 + seededRandom() * 0.3,
+        0.9 + seededRandom() * 0.3
+    );
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    return rock;
+}
+
+// ============================================
+// BUSHES
+// ============================================
+function createBushes() {
+    // Vine bushes - darker green with visible hanging vines
+    for (let i = 0; i < CONFIG.bushCount; i++) {
+        // More bushes in jungle area
+        const inJungle = seededRandom() < 0.75;
+        const maxDist = inJungle ? CONFIG.islandRadius * 0.55 : CONFIG.islandRadius * 0.75;
+        const minDist = inJungle ? 8 : CONFIG.islandRadius * 0.45;
+        const pos = getRandomIslandPosition(minDist, maxDist, 2);
+        
+        const bushGroup = createVineBush();
+        bushGroup.position.set(pos.x, pos.y, pos.z);
+        bushGroup.rotation.y = seededRandom() * Math.PI * 2;
+        bushGroup.userData.isBush = true;
+        bushGroup.userData.id = `bush_${i}`;
+        bushGroup.userData.resourceType = 'vine';
+        bushGroup.userData.vineAmount = 3 + Math.floor(seededRandom() * 3); // 3-5 vines per bush
+        bushGroup.userData.respawnTime = 25000;
+        scene.add(bushGroup);
+        allBushes.push({ mesh: bushGroup, vineAmount: bushGroup.userData.vineAmount });
+    }
+    logTest(`Created ${CONFIG.bushCount} vine bushes (vine source)`, 'info');
+}
+
+// Create a bush with visible hanging vines
+function createVineBush() {
+    const group = new THREE.Group();
+    
+    // Main bush body - darker green
+    const bushColors = [0x2d5a2d, 0x3a6a3a, 0x2a5a3a];
+    const bushMat = new THREE.MeshStandardMaterial({ 
+        color: bushColors[Math.floor(seededRandom() * bushColors.length)], 
+        roughness: 0.85 
+    });
+    
+    // Multiple overlapping spheres for fuller bush
+    for (let j = 0; j < 3; j++) {
+        const size = 0.6 + seededRandom() * 0.5;
+        const bushGeo = new THREE.SphereGeometry(size, 8, 6);
+        const bushPart = new THREE.Mesh(bushGeo, bushMat);
+        bushPart.position.set(
+            (seededRandom() - 0.5) * 0.6,
+            0.4 + j * 0.2,
+            (seededRandom() - 0.5) * 0.6
+        );
+        bushPart.scale.y = 0.6;
+        bushPart.castShadow = true;
+        group.add(bushPart);
+    }
+    
+    // Add visible hanging vines (thin green cylinders)
+    const vineMat = new THREE.MeshStandardMaterial({ color: 0x4a8a4a, roughness: 0.7 });
+    const vineCount = 3 + Math.floor(seededRandom() * 4);
+    for (let v = 0; v < vineCount; v++) {
+        const vineLength = 0.8 + seededRandom() * 0.6;
+        const vineGeo = new THREE.CylinderGeometry(0.03, 0.02, vineLength, 4);
+        const vine = new THREE.Mesh(vineGeo, vineMat);
+        const angle = (v / vineCount) * Math.PI * 2;
+        vine.position.set(
+            Math.cos(angle) * 0.5,
+            0.3 - vineLength / 2,
+            Math.sin(angle) * 0.5
+        );
+        vine.rotation.z = (seededRandom() - 0.5) * 0.3;
+        vine.rotation.x = (seededRandom() - 0.5) * 0.3;
+        group.add(vine);
+    }
+    
+    return group;
+}
+
+// ============================================
+// GRASS PATCHES - Visual variety
+// ============================================
+function createGrassPatches() {
+    const grassColors = [0x5a8a3a, 0x4a7a2a, 0x6a9a4a, 0x3a6a2a, 0x4a8a3a];
+    
+    for (let i = 0; i < (CONFIG.grassPatchCount || 60); i++) {
+        // Grass mostly in jungle and transition zones
+        const dist = CONFIG.islandRadius * (0.1 + seededRandom() * 0.7);
+        const angle = seededRandom() * Math.PI * 2;
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        const y = getTerrainHeight(x, z);
+        
+        if (y < 1.5) continue; // Not in water
+        
+        // Create grass clump with multiple blades
+        const grassGroup = new THREE.Group();
+        const bladeCount = 8 + Math.floor(seededRandom() * 12);
+        const grassMat = new THREE.MeshStandardMaterial({ 
+            color: grassColors[Math.floor(seededRandom() * grassColors.length)],
+            roughness: 0.9,
+            side: THREE.DoubleSide
+        });
+        
+        for (let b = 0; b < bladeCount; b++) {
+            const bladeHeight = 0.4 + seededRandom() * 0.6;
+            const bladeWidth = 0.08 + seededRandom() * 0.06;
+            const bladeGeo = new THREE.PlaneGeometry(bladeWidth, bladeHeight);
+            const blade = new THREE.Mesh(bladeGeo, grassMat);
+            
+            // Position within clump
+            blade.position.set(
+                (seededRandom() - 0.5) * 1.2,
+                bladeHeight / 2,
+                (seededRandom() - 0.5) * 1.2
+            );
+            blade.rotation.y = seededRandom() * Math.PI;
+            blade.rotation.x = (seededRandom() - 0.5) * 0.3; // Slight tilt
+            grassGroup.add(blade);
+        }
+        
+        grassGroup.position.set(x, y - 0.1, z);
+        grassGroup.rotation.y = seededRandom() * Math.PI * 2;
+        scene.add(grassGroup);
+        grassPatches.push(grassGroup);
+    }
+    logTest(`Created ${grassPatches.length} grass patches`, 'info');
+}
+
+// ============================================
+// GROUND STICKS (WOOD SOURCE)
+// ============================================
+function createGroundSticks() {
+    groundSticks.forEach(s => scene.remove(s.mesh));
+    groundSticks = [];
+    
+    for (let i = 0; i < MAX_GROUND_STICKS; i++) {
+        const pos = getRandomIslandPosition(12, CONFIG.islandRadius * 0.8, 2);
+        if (!pos) continue;
+        
+        const stickBundle = createStickBundle();
+        stickBundle.position.set(pos.x, pos.y + 0.1, pos.z);
+        stickBundle.rotation.y = seededRandom() * Math.PI * 2;
+        stickBundle.userData.isStick = true;
+        stickBundle.userData.id = `stick_${i}`;
+        stickBundle.userData.resourceType = 'wood';
+        scene.add(stickBundle);
+        groundSticks.push({ mesh: stickBundle, collected: false, respawnTime: 0 });
+    }
+    logTest(`Created ${groundSticks.length} stick bundles (wood source)`, 'info');
+}
+
+// Create a visible bundle of sticks/branches on the ground
+function createStickBundle() {
+    const group = new THREE.Group();
+    const stickMat = new THREE.MeshStandardMaterial({ color: 0x6B4423, roughness: 0.9 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x4a3015, roughness: 0.95 });
+    
+    // Multiple sticks in a pile
+    const stickCount = 3 + Math.floor(seededRandom() * 3);
+    for (let i = 0; i < stickCount; i++) {
+        const length = 1.0 + seededRandom() * 0.8; // Bigger sticks
+        const thickness = 0.05 + seededRandom() * 0.04;
+        const geo = new THREE.CylinderGeometry(thickness * 0.8, thickness, length, 6);
+        const mat = seededRandom() > 0.5 ? stickMat : darkMat;
+        const stick = new THREE.Mesh(geo, mat);
+        
+        // Lay flat with some variation
+        stick.rotation.x = Math.PI / 2 + (seededRandom() - 0.5) * 0.3;
+        stick.rotation.z = (seededRandom() - 0.5) * 0.4;
+        stick.position.set(
+            (seededRandom() - 0.5) * 0.4,
+            i * 0.06,
+            (seededRandom() - 0.5) * 0.4
+        );
+        stick.castShadow = true;
+        group.add(stick);
+    }
+    
+    return group;
+}
+
+function respawnStick(stickData) {
+    const pos = getRandomIslandPosition(12, CONFIG.islandRadius * 0.8, 2);
+    if (!pos) return;
+    
+    stickData.mesh.position.set(pos.x, pos.y + 0.1, pos.z);
+    stickData.mesh.rotation.y = Math.random() * Math.PI * 2;
+    stickData.mesh.visible = true;
+    stickData.collected = false;
+}
+
+// ============================================
+// FISH
+// ============================================
+function createFish() {
+    fishList.forEach(f => scene.remove(f.mesh));
+    fishList = [];
+    
+    const colors = {
+        mullet: 0xffd38a,
+        parrotfish: 0x4ecdc4,
+        grouper: 0xff6b35
+    };
+    
+    // Tier 1 - Mullet (shore / shallow ring)
+    for (let i = 0; i < CONFIG.fishCount; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = CONFIG.islandRadius * (1.05 + seededRandom() * 0.25);
+        const fish = createSingleFish([colors.mullet]);
+        fish.tier = 1;
+        fish.id = `mullet_${i}`;
+        fish.mesh.position.set(Math.cos(angle) * dist, -1.2 - seededRandom() * 0.8, Math.sin(angle) * dist);
+        fish.mesh.rotation.y = angle + Math.PI;
+        fish.angle = angle;
+        fish.dist = dist;
+        fish.speed = 0.18 + seededRandom() * 0.18;
+        fish.yBase = fish.mesh.position.y;
+        fish.alive = true;
+        scene.add(fish.mesh);
+        fishList.push(fish);
+    }
+    
+    // Tier 2 - Parrotfish (lagoon / mid ring)
+    for (let i = 0; i < Math.floor(CONFIG.fishCount * 0.7); i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = CONFIG.islandRadius * (1.4 + seededRandom() * 0.5);
+        const fish = createSingleFish([colors.parrotfish]);
+        fish.tier = 2;
+        fish.id = `parrot_${i}`;
+        fish.mesh.position.set(Math.cos(angle) * dist, -3 - seededRandom() * 1.5, Math.sin(angle) * dist);
+        fish.mesh.rotation.y = angle + Math.PI;
+        fish.angle = angle;
+        fish.dist = dist;
+        fish.speed = 0.22 + seededRandom() * 0.2;
+        fish.yBase = fish.mesh.position.y;
+        fish.alive = true;
+        scene.add(fish.mesh);
+        fishList.push(fish);
+    }
+    
+    // Tier 3 - Grouper (deep ring)
+    for (let i = 0; i < Math.floor(CONFIG.fishCount * 0.4); i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = CONFIG.islandRadius * (2.1 + seededRandom() * 0.8);
+        const fish = createSingleFish([colors.grouper]);
+        fish.tier = 3;
+        fish.id = `grouper_${i}`;
+        fish.mesh.position.set(Math.cos(angle) * dist, -6 - seededRandom() * 2, Math.sin(angle) * dist);
+        fish.mesh.rotation.y = angle + Math.PI;
+        fish.angle = angle;
+        fish.dist = dist;
+        fish.speed = 0.16 + seededRandom() * 0.18;
+        fish.yBase = fish.mesh.position.y;
+        fish.alive = true;
+        scene.add(fish.mesh);
+        fishList.push(fish);
+    }
+}
+
+function createSingleFish(colors) {
+    const group = new THREE.Group();
+    const color = colors[Math.floor(seededRandom() * colors.length)];
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.3 });
+    const bodyGeo = new THREE.ConeGeometry(0.15, 0.6, 6);
+    bodyGeo.rotateZ(-Math.PI / 2);
+    group.add(new THREE.Mesh(bodyGeo, mat));
+    const tailGeo = new THREE.ConeGeometry(0.12, 0.2, 4);
+    tailGeo.rotateZ(Math.PI / 2);
+    const tail = new THREE.Mesh(tailGeo, mat);
+    tail.position.x = -0.35;
+    group.add(tail);
+    group.scale.setScalar(0.8 + seededRandom() * 0.6);
+    return { mesh: group };
+}
+
+// ============================================
+// TRIBE MEMBERS (AGENTS)
+// ============================================
+function createTribeMembers() {
+    tribeMembers.forEach(m => {
+        scene.remove(m.mesh);
+        if (m.marker) scene.remove(m.marker);
+    });
+    tribeMembers = [];
+    
+    // Spawn agents at RANDOM positions across the island
+    for (let i = 0; i < CONFIG.tribeMembers; i++) {
+        const member = createTribeMember(i);
+        // Random position anywhere on the island (not too close to water)
+        const pos = getRandomIslandPosition(15, CONFIG.islandRadius * 0.75, 4);
+        
+        member.mesh.position.set(pos.x, pos.y, pos.z);
+        member.mesh.rotation.y = seededRandom() * Math.PI * 2; // Random facing
+        member.targetAngle = member.mesh.rotation.y;
+        scene.add(member.mesh);
+        tribeMembers.push(member);
+    }
+    logTest(`Created ${CONFIG.tribeMembers} agents`, 'info');
+}
+
+function createTribeMember(idx) {
+    const group = new THREE.Group();
+    
+    // More diverse and darker skin tones - proper black skin colors
+    const skinTones = [
+        0x3d2314, // Very dark brown
+        0x4a2c17, // Dark brown
+        0x5c3a21, // Rich dark brown
+        0x2d1b0e, // Deep black-brown
+        0x6b4423, // Medium dark brown
+        0x8b5a2b, // Medium brown
+        0x4d3319, // Dark chocolate
+        0x362112, // Near black
+    ];
+    const skinColor = skinTones[Math.floor(seededRandom() * skinTones.length)];
+    const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
+    
+    // Height variation - some taller, some shorter
+    const heightScale = 0.8 + seededRandom() * 0.5; // 0.8 to 1.3 height multiplier
+    const bodyWidth = 0.9 + seededRandom() * 0.25; // Some stockier, some thinner
+    
+    const bodyGeo = new THREE.CapsuleGeometry(0.35 * bodyWidth, 1 * heightScale, 8, 12);
+    const body = new THREE.Mesh(bodyGeo, skinMat);
+    body.position.y = 1.3 * heightScale;
+    body.castShadow = true;
+    group.add(body);
+    
+    const headSize = 0.28 + seededRandom() * 0.06;
+    const headGeo = new THREE.SphereGeometry(headSize, 12, 12);
+    const head = new THREE.Mesh(headGeo, skinMat);
+    head.position.y = 2.1 * heightScale + 0.1;
+    head.castShadow = true;
+    group.add(head);
+    
+    // Store height for positioning
+    group.userData.heightScale = heightScale;
+    
+    // Eyes - adjusted for head position
+    const eyeY = 2.15 * heightScale + 0.1;
+    const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f0 });
+    const eyePupilMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a });
+    
+    const eyeWhiteGeo = new THREE.SphereGeometry(0.055, 8, 8);
+    const eyePupilGeo = new THREE.SphereGeometry(0.03, 6, 6);
+    
+    // Left eye
+    const leftEyeWhite = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
+    leftEyeWhite.position.set(-0.09, eyeY, 0.22);
+    group.add(leftEyeWhite);
+    const leftPupil = new THREE.Mesh(eyePupilGeo, eyePupilMat);
+    leftPupil.position.set(-0.09, eyeY, 0.27);
+    group.add(leftPupil);
+    
+    // Right eye
+    const rightEyeWhite = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
+    rightEyeWhite.position.set(0.09, eyeY, 0.22);
+    group.add(rightEyeWhite);
+    const rightPupil = new THREE.Mesh(eyePupilGeo, eyePupilMat);
+    rightPupil.position.set(0.09, eyeY, 0.27);
+    group.add(rightPupil);
+    
+    // Hair - different styles
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95 });
+    const hairStyle = Math.floor(seededRandom() * 3);
+    if (hairStyle === 0) {
+        // Afro style
+        const hairGeo = new THREE.SphereGeometry(0.35, 12, 12);
+        const hair = new THREE.Mesh(hairGeo, hairMat);
+        hair.position.y = 2.25 * heightScale + 0.15;
+        hair.scale.set(1.1, 0.7 + seededRandom() * 0.4, 1.1);
+        group.add(hair);
+    } else if (hairStyle === 1) {
+        // Short hair
+        const hairGeo = new THREE.SphereGeometry(0.3, 12, 12);
+        const hair = new THREE.Mesh(hairGeo, hairMat);
+        hair.position.y = 2.2 * heightScale + 0.15;
+        hair.scale.y = 0.4;
+        group.add(hair);
+    } else {
+        // Bald/very short
+        const hairGeo = new THREE.SphereGeometry(0.29, 12, 12);
+        const hair = new THREE.Mesh(hairGeo, hairMat);
+        hair.position.y = 2.18 * heightScale + 0.12;
+        hair.scale.y = 0.25;
+        group.add(hair);
+    }
+    
+    // Grass skirt - scaled
+    const skirtMat = new THREE.MeshStandardMaterial({ color: 0x355e3b, side: THREE.DoubleSide });
+    for (let i = 0; i < 16; i++) {
+        const strandGeo = new THREE.PlaneGeometry(0.08, (0.4 + seededRandom() * 0.15) * heightScale);
+        const strand = new THREE.Mesh(strandGeo, skirtMat);
+        const angle = (i / 16) * Math.PI * 2;
+        strand.position.set(Math.cos(angle) * 0.3 * bodyWidth, 0.7 * heightScale, Math.sin(angle) * 0.3 * bodyWidth);
+        strand.rotation.y = angle;
+        strand.rotation.x = 0.25;
+        group.add(strand);
+    }
+    
+    // Legs - scaled
+    const legGeo = new THREE.CapsuleGeometry(0.1 * bodyWidth, 0.5 * heightScale, 4, 8);
+    const leftLeg = new THREE.Mesh(legGeo, skinMat);
+    leftLeg.position.set(-0.15 * bodyWidth, 0.35 * heightScale, 0);
+    leftLeg.castShadow = true;
+    group.add(leftLeg);
+    
+    const rightLeg = new THREE.Mesh(legGeo, skinMat);
+    rightLeg.position.set(0.15 * bodyWidth, 0.35 * heightScale, 0);
+    rightLeg.castShadow = true;
+    group.add(rightLeg);
+    
+    // Arms - scaled
+    const armGeo = new THREE.CapsuleGeometry(0.07 * bodyWidth, 0.4 * heightScale, 4, 8);
+    const leftArm = new THREE.Mesh(armGeo, skinMat);
+    leftArm.position.set(-0.45 * bodyWidth, 1.4 * heightScale, 0);
+    leftArm.rotation.z = 0.25;
+    leftArm.castShadow = true;
+    group.add(leftArm);
+    
+    const rightArm = new THREE.Mesh(armGeo, skinMat);
+    rightArm.position.set(0.45 * bodyWidth, 1.4 * heightScale, 0);
+    rightArm.rotation.z = -0.25;
+    rightArm.castShadow = true;
+    group.add(rightArm);
+    
+    const tacticalMarker = new THREE.Mesh(tacticalMarkerGeo, tacticalMarkerMat.clone());
+    tacticalMarker.visible = false;
+    scene.add(tacticalMarker);
+    
+    // Simple carry bundle on back to show when carrying resources
+    const carryGeo = new THREE.BoxGeometry(0.4, 0.3, 0.2);
+    const carryMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.8 });
+    const carryBundle = new THREE.Mesh(carryGeo, carryMat);
+    carryBundle.position.set(0, 1.2 * heightScale, -0.35);
+    carryBundle.visible = false;
+    group.add(carryBundle);
+    
+    // HEALTH BAR (hunger) above head - transparent background, clear fill
+    const healthBarY = 2.7 * heightScale + 0.3;
+    const healthBarBg = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.2, 0.15),
+        new THREE.MeshBasicMaterial({ 
+            color: 0x000000, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.3 // Semi-transparent background
+        })
+    );
+    healthBarBg.position.y = healthBarY;
+    group.add(healthBarBg);
+    
+    // Border/outline for clarity
+    const healthBarBorder = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.25, 0.2),
+        new THREE.MeshBasicMaterial({ 
+            color: 0xffffff, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.5
+        })
+    );
+    healthBarBorder.position.y = healthBarY;
+    healthBarBorder.position.z = -0.01;
+    group.add(healthBarBorder);
+    
+    const healthBarFill = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.1, 0.1),
+        new THREE.MeshBasicMaterial({ 
+            color: 0x44dd44, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9
+        })
+    );
+    healthBarFill.position.y = healthBarY;
+    healthBarFill.position.z = 0.02;
+    group.add(healthBarFill);
+    
+    return {
+        mesh: group,
+        id: `agent_${idx}`,
+        targetAngle: seededRandom() * Math.PI * 2,
+        walkPhase: seededRandom() * Math.PI * 2,
+        leftLeg, rightLeg, leftArm, rightArm,
+        healthBarFill, healthBarBg, healthBarBorder,
+        // Core needs
+        hunger: 0.9 + seededRandom() * 0.1, // Start very well-fed
+        energy: 1.0,
+        health: 1.0,
+        socialNeed: 1.0,
+        reproductionDrive: 0.0,
+        ageYears: 18 + seededRandom() * 20, // Start as young adults (visual/stat only)
+        alive: true,
+        state: 'walking', // Always start walking to find food
+        targetTree: null,
+        targetCoconut: null,
+        targetRock: null,
+        targetBush: null,
+        targetStick: null,
+        targetAgent: null,
+        // Relationships (social system)
+        relationships: {},
+        // EXPANDED INVENTORY for Phase 1 (max 6 = 3 per hand)
+        inventory: { 
+            coconuts: 1, // Start with 1 coconut to survive
+            wood: 0, 
+            stone: 0, 
+            vines: 0,
+            // Simple fish tiers – raw counts for now
+            mullet: 0,
+            parrotfish: 0,
+            grouper: 0
+        },
+        // SKILL SYSTEM - improves with experience (generic gathering skill for now)
+        gatheringSkill: 0.3 + seededRandom() * 0.3, // 0.3 to 0.6 starting gathering skill
+        fishingSkill: 0.2 + seededRandom() * 0.2,   // Small fishing skill starter
+        coconutsGathered: 0, // Track for skill improvement
+        fishCaught: 0,
+        // TOOLS
+        tools: {
+            gatheringStick: null, // { durability: N } or null
+            stoneAxe: null,
+            spear: null
+        },
+        // Fishing state
+        targetFishingSpot: null,
+        targetFish: null,
+        fishTime: 0,
+        restTime: 0,
+        gatherTime: 0,
+        // ML tracking
+        inWater: false,
+        lastAction: null,
+        lastReward: 0,
+        cumulativeReward: 0,
+        // Leaderboard stats
+        coconutsEaten: 0,
+        totalReward: 0,
+        survivalTime: 0,
+        marker: tacticalMarker,
+        carryBundle,
+        // Objective/efficiency tracking
+        currentObjective: 'walking',
+        efficiency: 1,
+        effWindowProductive: 0,
+        effWindowTotal: 0,
+        lowEfficiencyTime: 0,
+        markedInefficient: false
+    };
+}
+
+// ============================================
+// HUNTER SYSTEM REMOVED FOR PHASE 1
+// ============================================
+
+// ============================================
+// AGENT DEATH & RESPAWN
+// ============================================
+function handleAgentDeath(agent, cause) {
+    agent.alive = false;
+    agent.mesh.visible = false;
+    if (agent.marker) agent.marker.visible = false;
+    totalDeaths++;
+    
+    // Play death sound and apply penalty based on cause
+    if (cause === 'drowning') {
+        playSound('water_splash', 0.25);
+        // WATER DEATH IS EXTRA BAD - 2x normal death
+        agent.lastReward = -600;
+        agent.totalReward = (agent.totalReward || 0) - 600;
+    } else {
+        playSound('death', 0.2);
+        // Track ML death penalty - WORSE THAN 10 COCONUTS (10 * 25 = 250)
+        agent.lastReward = -300;
+        agent.totalReward = (agent.totalReward || 0) - 300;
+    }
+    agent.cumulativeReward += agent.lastReward;
+    
+    logTest(`💀 ${agent.id} died (${cause})`, 'error');
+    
+    logTest(`Agent ${agent.id} died of ${cause}`, 'warning');
+    
+    // Auto-respawn if enabled
+    if (CONFIG.autoRespawn) {
+        setTimeout(() => respawnAgent(agent), CONFIG.respawnDelay);
+    }
+}
+
+function respawnAgent(agent) {
+    // Find a safe spawn position
+    const pos = getRandomIslandPosition(30, CONFIG.islandRadius * 0.5, 6);
+    
+    // Reset agent state
+    agent.alive = true;
+    agent.mesh.visible = true;
+    if (agent.marker) agent.marker.visible = true;
+    agent.mesh.position.set(pos.x, pos.y, pos.z);
+    agent.mesh.rotation.y = seededRandom() * Math.PI * 2;
+    
+    // Respawn with MORE resources to survive better
+    agent.hunger = 0.7 + seededRandom() * 0.2;
+    agent.energy = 0.9 + seededRandom() * 0.1;
+    agent.state = 'idle';
+    agent.targetTree = null;
+    agent.targetCoconut = null;
+    agent.targetRock = null;
+    agent.targetBush = null;
+    agent.targetStick = null;
+    agent.craftingItem = null;
+    agent.inventory = { coconuts: 0, wood: 0, stone: 0, vines: 0 };
+    agent.tools = { gatheringStick: null, stoneAxe: null };
+    agent.inWater = false;
+    agent.targetAngle = agent.mesh.rotation.y;
+    
+    // Reset ML tracking for new "life" (but keep lifetime stats)
+    agent.lastAction = null;
+    agent.lastReward = 0;
+    
+    logTest(`Agent ${agent.id} respawned`, 'success');
+}
+
+// Respawn collected sticks over time
+function updateGroundSticks() {
+    const now = Date.now();
+    groundSticks.forEach(stick => {
+        if (stick.collected && stick.respawnTime && now >= stick.respawnTime) {
+            respawnStick(stick);
+        }
+    });
+}
+
+// ============================================
+// AGENT UPDATE - WITH WATER SURVIVAL
+// ============================================
+function updateTribeMembers(delta) {
+    tribeMembers.forEach(m => {
+        if (!m.alive) return;
+        
+        // Check if agent is in water - INSTANT DEATH
+        const terrainY = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
+        m.inWater = terrainY < CONFIG.waterLevel + 0.5;
+        
+        // INSTANT DEATH IN WATER
+        if (m.inWater) {
+            handleAgentDeath(m, 'drowning');
+            return;
+        }
+        // COLLISION DETECTION - punish walking into other agents
+        let collisionPenalty = 0;
+        tribeMembers.forEach(other => {
+            if (other === m || !other.alive) return;
+            const dx = other.mesh.position.x - m.mesh.position.x;
+            const dz = other.mesh.position.z - m.mesh.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < 1.5) { // Too close!
+                collisionPenalty -= 2.0; // Punishment for crowding
+                m.lastReward = (m.lastReward || 0) - 2.0;
+                m.totalReward = (m.totalReward || 0) - 2.0;
+                // Push away slightly
+                const pushAngle = Math.atan2(dx, dz) + Math.PI;
+                m.targetAngle = pushAngle + (seededRandom() - 0.5) * 0.3;
+            }
+        });
+        
+        // AUTO-PICKUP: If walking over a ground coconut, stop and visibly pick it up
+        if (m.state === 'walking' && !m.targetCoconut && canCarryMore(m)) {
+            for (let i = groundCoconuts.length - 1; i >= 0; i--) {
+                const gc = groundCoconuts[i];
+                const dx = gc.mesh.position.x - m.mesh.position.x;
+                const dz = gc.mesh.position.z - m.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 1.5) {
+                    m.targetCoconut = gc;
+                    m.state = 'pickingUp';
+                    m.gatherTime = RESOURCES.COCONUT.gatherTime * 0.5;
+                    logTest(`🤲 ${m.id} started picking up a ground coconut (auto)`, 'info');
+                    break;
+                }
+            }
+        }
+        
+        // AUTO-EAT: If hungry and have food, eat!
+        if (m.hunger < 0.5 && m.inventory.coconuts > 0) {
+            m.inventory.coconuts--;
+            m.hunger = Math.min(1, m.hunger + CONFIG.coconutNutrition);
+            playSound('eat', 0.15);
+            m.lastReward = (m.lastReward || 0) + 100.0; // BIG reward for eating
+            m.totalReward = (m.totalReward || 0) + 100.0;
+            m.coconutsEaten = (m.coconutsEaten || 0) + 1;
+            logTest(`🥥 ${m.id} ate coconut #${m.coconutsEaten}! (${(m.hunger * 100).toFixed(0)}%)`, 'success');
+            
+            // TREE TELEPORTS after getting coconut!
+            teleportTree();
+        }
+        
+        // Track survival time (aging visuals only for now, no old-age death)
+        m.survivalTime = (m.survivalTime || 0) + delta;
+        
+        const hungerMult = m.state === 'walking' ? CONFIG.hungerMovingMultiplier : 1;
+        m.hunger -= CONFIG.hungerDecayRate * delta * hungerMult;
+        
+        if (m.state === 'walking' || m.state === 'gathering') {
+            m.energy -= CONFIG.energyDecayRate * delta;
+        } else if (m.state === 'resting') {
+            m.energy += CONFIG.energyRestoreRate * delta;
+        }
+        
+        // Simple social need: recover when near others, decay when alone
+        let hasNearbyFriend = false;
+        tribeMembers.forEach(other => {
+            if (other === m || !other.alive) return;
+            const dx = other.mesh.position.x - m.mesh.position.x;
+            const dz = other.mesh.position.z - m.mesh.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < 6) {
+                hasNearbyFriend = true;
+            }
+        });
+        if (hasNearbyFriend) {
+            m.socialNeed = Math.min(1, (m.socialNeed || 0) + CONFIG.socialNeedRecoverRate * delta);
+        } else {
+            m.socialNeed = Math.max(0, (m.socialNeed || 0) - CONFIG.socialNeedDecayRate * delta);
+        }
+        
+        // Reproduction drive slowly increases for adults
+        m.reproductionDrive = Math.min(1, (m.reproductionDrive || 0) + CONFIG.reproductionDriveRate * delta);
+        
+        // AGGRESSIVE WATER AVOIDANCE - check further ahead
+        const lookAheadDist = CONFIG.agentSpeed * delta * 5; // Check 5 steps ahead
+        const nextX = m.mesh.position.x + Math.sin(m.targetAngle) * lookAheadDist;
+        const nextZ = m.mesh.position.z + Math.cos(m.targetAngle) * lookAheadDist;
+        const nextTerrainY = getTerrainHeight(nextX, nextZ);
+        const approachingWater = nextTerrainY < CONFIG.waterLevel + 2; // Check 2 units before water
+        
+        if (approachingWater && m.state === 'walking') {
+            // INSTANT DEATH if they enter! Turn away aggressively
+            const toCenter = Math.atan2(-m.mesh.position.x, -m.mesh.position.z);
+            // Turn 90-180 degrees away from water, toward center
+            m.targetAngle = toCenter + (seededRandom() - 0.5) * Math.PI * 0.8;
+            // Penalty for approaching water
+            m.lastReward = (m.lastReward || 0) - 5.0;
+            m.totalReward = (m.totalReward || 0) - 5.0;
+        }
+        
+        // Also check current position - if too close to water edge, move away
+        const currentTerrainY = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
+        if (currentTerrainY < CONFIG.waterLevel + 3 && currentTerrainY > CONFIG.waterLevel + 0.5) {
+            // Near water edge - force move toward center
+            const toCenter = Math.atan2(-m.mesh.position.x, -m.mesh.position.z);
+            m.targetAngle = toCenter + (seededRandom() - 0.5) * 0.3; // Small random variation
+            if (m.state === 'idle') m.state = 'walking';
+        }
+        
+        m.hunger = Math.max(0, Math.min(1, m.hunger));
+        m.energy = Math.max(0, Math.min(1, m.energy));
+        
+        // Health dynamics: ONLY decays when critically hungry, recovers otherwise
+        // Simplified for Phase 1: health is mostly stable, only starvation kills
+        const criticallyHungry = m.hunger < 0.05;
+        let healthDelta = 0;
+        
+        if (criticallyHungry) {
+            // Only lose health when almost at 0 hunger
+            healthDelta = -0.004 * delta;
+        } else if (m.hunger > 0.6) {
+            // Very slow regen when comfortably fed
+            healthDelta = 0.002 * delta;
+        }
+        
+        m.health = Math.max(0, Math.min(1, (m.health || 1) + healthDelta));
+        
+        // Death conditions
+        if (m.hunger <= 0.0) {
+            // Emergency bailout: if there is any food in the world, force this agent
+            // into an eat objective instead of letting them quietly die.
+            const invFood = m.inventory.coconuts || 0;
+            const groundFood = groundCoconuts.length;
+            const treeFood = allTrees.reduce((sum, t) => sum + (t.mesh.userData.coconuts || 0), 0);
+            const hutFoodEmergency =
+                sharedStash.coconuts +
+                sharedStash.mullet +
+                sharedStash.parrotfish +
+                sharedStash.grouper;
+            
+            if (invFood > 0 || groundFood > 0 || treeFood > 0 || hutFoodEmergency > 0) {
+                // Clamp hunger to tiny value and redirect into strict eat objective
+                m.hunger = 0.05;
+                m.state = 'idle';
+                m.goingToStash = false;
+                m.wantsToEatFromStash = false;
+                decideAction(m);
+            } else {
+                handleAgentDeath(m, 'starvation');
+            }
+            return;
+        }
+        if (m.health <= 0.0) {
+            const cause = (m.ageYears || 0) > CONFIG.oldAgeThreshold ? 'old_age' : 'health';
+            handleAgentDeath(m, cause);
+            return;
+        }
+        
+        // Enforce ground clamping to prevent glitching
+        const groundY = getTerrainHeight(m.mesh.position.x, m.mesh.position.z);
+        if (m.mesh.position.y < groundY) {
+            m.mesh.position.y = groundY;
+        }
+        
+        // Core decision loop: pick concrete objectives every tick
+        decideAction(m);
+        executeState(m, delta);
+        // === EFFICIENCY TRACKING ===
+        const inv = m.inventory;
+        const carryingAny = (inv.coconuts || 0) + (inv.wood || 0) + (inv.stone || 0) +
+            (inv.vines || 0) + (inv.mullet || 0) + (inv.parrotfish || 0) + (inv.grouper || 0) > 0;
+        let productiveThisStep = false;
+        
+        // Classify productive time by current state + intent
+        if (m.state === 'eating') {
+            productiveThisStep = true;
+        } else if (m.state === 'crafting') {
+            productiveThisStep = true;
+        } else if (m.state === 'fishing' || m.targetFish) {
+            productiveThisStep = true;
+        } else if (m.goingToStash || (m.state === 'walking' && carryingAny)) {
+            productiveThisStep = true;
+        } else if (
+            m.state === 'gathering' ||
+            m.state === 'gathering_wood' ||
+            m.state === 'gathering_stone' ||
+            m.state === 'gathering_vine' ||
+            m.targetCoconut || m.targetTree || m.targetStick || m.targetRock || m.targetBush
+        ) {
+            productiveThisStep = true;
+        }
+        
+        m.effWindowTotal += delta;
+        if (productiveThisStep) m.effWindowProductive += delta;
+        
+        if (m.effWindowTotal >= 15) {
+            m.efficiency = m.effWindowProductive / m.effWindowTotal;
+            m.effWindowProductive = 0;
+            m.effWindowTotal = 0;
+        }
+        
+        if (m.efficiency !== undefined) {
+            if (m.efficiency < 0.3) {
+                m.lowEfficiencyTime += delta;
+            } else {
+                m.lowEfficiencyTime = Math.max(0, m.lowEfficiencyTime - delta * 0.5);
+            }
+        }
+        
+        // If an agent stays inefficient for too long, drain health hard and kill them
+        if (m.lowEfficiencyTime > 20) {
+            const drain = 0.25 * delta;
+            m.health = Math.max(0, m.health - drain);
+            if (!m.markedInefficient) {
+                logTest(`☠️ ${m.id} is critically inefficient (eff ${(m.efficiency * 100).toFixed(0)}%), draining health`, 'warning');
+                m.markedInefficient = true;
+            }
+        }
+        
+        // === CARRY BUNDLE VISUAL ===
+        if (m.carryBundle) {
+            const invCarry = (inv.coconuts || 0) + (inv.wood || 0) + (inv.stone || 0) + (inv.vines || 0) +
+                (inv.mullet || 0) + (inv.parrotfish || 0) + (inv.grouper || 0);
+            if (invCarry > 0) {
+                m.carryBundle.visible = true;
+                const scale = 0.4 + Math.min(invCarry / CONFIG.maxInventory, 1) * 0.6;
+                m.carryBundle.scale.set(scale, scale, scale);
+            } else {
+                m.carryBundle.visible = false;
+            }
+        }
+        
+        // Sound effects for agent
+        updateAgentSounds(m, delta);
+        
+        // Update health bar (hunger) - clearer visual
+        if (m.healthBarFill) {
+            const hungerPercent = Math.max(0.01, m.hunger); // Minimum visible
+            m.healthBarFill.scale.x = hungerPercent;
+            m.healthBarFill.position.x = (hungerPercent - 1) * 0.55; // Keep left-aligned
+            
+            // Color gradient: green -> yellow -> orange -> red
+            if (m.hunger > 0.6) {
+                m.healthBarFill.material.color.setHex(0x44dd44); // Green - healthy
+            } else if (m.hunger > 0.4) {
+                m.healthBarFill.material.color.setHex(0xaadd22); // Yellow-green - getting hungry
+            } else if (m.hunger > 0.25) {
+                m.healthBarFill.material.color.setHex(0xffaa00); // Orange - hungry!
+            } else {
+                m.healthBarFill.material.color.setHex(0xff2222); // Red - starving!
+            }
+            
+            // Face camera for all bar elements
+            m.healthBarBg.lookAt(camera.position);
+            m.healthBarFill.lookAt(camera.position);
+            if (m.healthBarBorder) m.healthBarBorder.lookAt(camera.position);
+        }
+        
+        // Hungry sound
+        if (m.hunger < 0.3 && Math.random() < delta * 0.5) {
+            playSound('hungry', 0.15);
+        }
+        
+        // Near water warning
+        if (getTerrainHeight(m.mesh.position.x, m.mesh.position.z) < CONFIG.waterLevel + 5) {
+            if (Math.random() < delta * 2) {
+                playSound('near_water', 0.2);
+            }
+        }
+
+        if (m.marker) {
+            const shouldShowMarker = CONFIG.cameraMode === 'tactical';
+            m.marker.visible = shouldShowMarker && m.alive;
+            if (m.marker.visible) {
+                m.marker.position.set(m.mesh.position.x, getTerrainHeight(m.mesh.position.x, m.mesh.position.z) + 5, m.mesh.position.z);
+            }
+        }
+    });
+}
+
+function decideAction(m) {
+    // Skip if already in the middle of an atomic action
+    const busyStates = [
+        'resting',
+        'gathering', 'gathering_wood', 'gathering_stone', 'gathering_vine',
+        'eating', 'pickingUp',
+        'crafting',
+        'giving',
+        'fishing'
+    ];
+    if (busyStates.includes(m.state)) return;
+
+    const inv = m.inventory;
+    const carryingAny =
+        (inv.coconuts || 0) +
+        (inv.wood || 0) +
+        (inv.stone || 0) +
+        (inv.vines || 0) +
+        (inv.mullet || 0) +
+        (inv.parrotfish || 0) +
+        (inv.grouper || 0) > 0;
+
+    // Reset transient flags if we are not currently heading somewhere
+    if (m.state === 'idle') {
+        m.goingToStash = false;
+        m.wantsToEatFromStash = false;
+    }
+
+    // Hut food value (weighted by quality)
+    const hutFoodValue =
+        sharedStash.coconuts * 1 +
+        sharedStash.mullet * 2 +
+        sharedStash.parrotfish * 3 +
+        sharedStash.grouper * 4;
+    const hutFoodLow = hutFoodValue < 8;
+    const hutFoodHigh = hutFoodValue >= 18;
+
+    // === 1. Help nearby hungry agents (social sharing) ===
+    if (inv.coconuts > 1) {
+        const hungry = findNearbyHungryAgent(m, 10);
+        if (hungry) {
+            m.targetAgent = hungry;
+            m.state = 'giving';
+            m.currentObjective = 'share food';
+            return;
+        }
+    }
+
+    // === 2. Eat if personally hungry and food exists ===
+    if (m.hunger < 0.6 && (inv.coconuts > 0 || hutFoodValue > 0)) {
+        if (inv.coconuts > 0) {
+            m.state = 'eating';
+            m.currentObjective = 'eat (inventory)';
+            return;
+        } else {
+            // Walk to hut to eat from stash
+            m.wantsToEatFromStash = true;
+            m.goingToStash = true;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.targetAngle = Math.atan2(
+                STASH_POSITION.x - m.mesh.position.x,
+                STASH_POSITION.z - m.mesh.position.z
+            );
+            m.currentObjective = 'eat (hut stash)';
+            return;
+        }
+    }
+
+    // === 3. If carrying resources, haul straight to hut ===
+    if (carryingAny) {
+        m.targetFishingSpot = null;
+        m.targetTree = null;
+        m.targetCoconut = null;
+        m.targetStick = null;
+        m.targetRock = null;
+        m.targetBush = null;
+        m.targetFish = null;
+        m.goingToStash = true;
+        m.wantsToEatFromStash = false;
+        m.state = 'walking';
+        m.targetAngle = Math.atan2(
+            STASH_POSITION.x - m.mesh.position.x,
+            STASH_POSITION.z - m.mesh.position.z
+        );
+        m.currentObjective = 'deposit';
+        return;
+    }
+
+    // === 4. Craft tools from inventory when possible ===
+    // Gathering stick -> Stone axe -> Spear
+    if (!m.tools.gatheringStick && canCraftGatheringStick(m)) {
+        if (startCrafting(m, 'gathering_stick')) {
+            m.currentObjective = 'craft gathering stick';
+            return;
+        }
+    }
+    if (!m.tools.stoneAxe && canCraftStoneAxe(m)) {
+        if (startCrafting(m, 'stone_axe')) {
+            m.currentObjective = 'craft stone axe';
+            return;
+        }
+    }
+    if (!m.tools.spear && canCraftSpear(m)) {
+        if (startCrafting(m, 'spear')) {
+            m.currentObjective = 'craft spear';
+            return;
+        }
+    }
+
+    // === 5. Tribe-level food acquisition ===
+    // If hut food is low, prioritize food (coconuts or fish) even if we are not yet starving.
+    if (hutFoodLow) {
+        // Prefer nearest ground coconut
+        const groundCoconut = findNearestGroundCoconut(m, 100);
+        if (groundCoconut && canCarryMore(m)) {
+            m.targetCoconut = groundCoconut;
+            m.targetTree = null;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.currentObjective = 'acquire food (ground coconut)';
+            return;
+        }
+
+        // Then tree coconuts
+        const tree = findNearestCoconutTree(m, 100);
+        if (tree && canCarryMore(m)) {
+            m.targetTree = tree;
+            m.targetCoconut = null;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.currentObjective = 'acquire food (tree coconut)';
+            return;
+        }
+
+        // Finally shallow-water mullet fishing
+        const candidateFish = findNearestFish(m, 1);
+        if (candidateFish) {
+            m.targetFish = candidateFish;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.state = 'walking';
+            m.currentObjective = 'acquire food (mullet)';
+            return;
+        }
+    }
+
+    // === 6. Materials gathering: scarcest hut resource (wood / stone / vines) ===
+    const counts = [
+        { key: 'wood', value: sharedStash.wood },
+        { key: 'stone', value: sharedStash.stone },
+        { key: 'vines', value: sharedStash.vines }
+    ].sort((a, b) => a.value - b.value);
+    const scarcest = counts[0]?.key;
+
+    if (scarcest === 'wood') {
+        const stick = findNearestStick(m, 80);
+        if (stick && canCarryMore(m)) {
+            m.targetStick = stick;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.currentObjective = 'gather wood';
+            return;
+        }
+    } else if (scarcest === 'stone') {
+        const rock = findNearestRock(m, 80);
+        if (rock && canCarryMore(m)) {
+            m.targetRock = rock;
+            m.targetStick = null;
+            m.targetBush = null;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.currentObjective = 'gather stone';
+            return;
+        }
+    } else if (scarcest === 'vines') {
+        const bush = findNearestBush(m, 80);
+        if (bush && canCarryMore(m)) {
+            m.targetBush = bush;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetFish = null;
+            m.state = 'walking';
+            m.currentObjective = 'gather vines';
+            return;
+        }
+    }
+
+    // === 7. If materials buffer is healthy, send some agents to fish even when not starving ===
+    if (hutFoodHigh && !m.tools.spear && canCraftSpear(m)) {
+        // Craft spear then fishing will be picked up next decisions
+        if (startCrafting(m, 'spear')) {
+            m.currentObjective = 'craft spear (for fishing)';
+            return;
+        }
+    } else if (hutFoodHigh) {
+        const candidateFish = findNearestFish(m, 1);
+        if (candidateFish) {
+            m.targetFish = candidateFish;
+            m.targetTree = null;
+            m.targetCoconut = null;
+            m.targetStick = null;
+            m.targetRock = null;
+            m.targetBush = null;
+            m.state = 'walking';
+            m.currentObjective = 'fish (tribe surplus)';
+            return;
+        }
+    }
+
+    // === 8. Fallback: patrol around hut ready to react ===
+    if (m.state === 'idle') {
+        const angle = Math.atan2(m.mesh.position.x, m.mesh.position.z) + Math.PI * 0.5;
+        m.targetAngle = angle;
+        m.state = 'walking';
+        m.currentObjective = 'patrol hut';
+    }
+}
+
+// Find a nearby hungry agent who needs food
+function findNearbyHungryAgent(m, maxDist = 20) {
+    let hungriest = null, lowestHunger = 0.3; // Only help if they're below 30% hunger
+    tribeMembers.forEach(other => {
+        if (other === m || !other.alive) return;
+        if (other.inventory.coconuts > 0) return; // They have food already
+        
+        const dx = other.mesh.position.x - m.mesh.position.x;
+        const dz = other.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        
+        if (dist < maxDist && other.hunger < lowestHunger) {
+            lowestHunger = other.hunger;
+            hungriest = other;
+        }
+    });
+    return hungriest;
+}
+
+function findNearestGroundCoconut(m, maxDist = Infinity) {
+    let nearest = null, nearestDist = maxDist;
+    groundCoconuts.forEach(gc => {
+        const dx = gc.mesh.position.x - m.mesh.position.x;
+        const dz = gc.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = gc;
+        }
+    });
+    return nearest;
+}
+
+// Find nearest rock with stone available
+function findNearestRock(m, maxDist = Infinity) {
+    let nearest = null, nearestDist = maxDist;
+    allRocks.forEach(rock => {
+        if (!rock.mesh.userData.stoneAmount || rock.mesh.userData.stoneAmount <= 0) return;
+        const dx = rock.mesh.position.x - m.mesh.position.x;
+        const dz = rock.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = rock;
+        }
+    });
+    return nearest;
+}
+
+// Find nearest bush with vines available
+function findNearestBush(m, maxDist = Infinity) {
+    let nearest = null, nearestDist = maxDist;
+    allBushes.forEach(bush => {
+        if (!bush.mesh.userData.vineAmount || bush.mesh.userData.vineAmount <= 0) return;
+        const dx = bush.mesh.position.x - m.mesh.position.x;
+        const dz = bush.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = bush;
+        }
+    });
+    return nearest;
+}
+
+// Find nearest ground stick
+function findNearestStick(m, maxDist = Infinity) {
+    let nearest = null, nearestDist = maxDist;
+    groundSticks.forEach(stick => {
+        if (stick.collected || !stick.mesh.visible) return;
+        const dx = stick.mesh.position.x - m.mesh.position.x;
+        const dz = stick.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = stick;
+        }
+    });
+    return nearest;
+}
+
+function findNearbyAgent(m, maxDist = 2) {
+    for (const other of tribeMembers) {
+        if (other === m || !other.alive) continue;
+        const dx = other.mesh.position.x - m.mesh.position.x;
+        const dz = other.mesh.position.z - m.mesh.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < maxDist) return other;
+    }
+    return null;
+}
+
+function findNearestCoconutTree(m, maxDist = Infinity) {
+    let nearest = null, nearestDist = maxDist;
+    allTrees.forEach(t => {
+        if (t.mesh.userData.treeType === 'palm' && t.mesh.userData.coconuts > 0) {
+            const dx = t.mesh.position.x - m.mesh.position.x;
+            const dz = t.mesh.position.z - m.mesh.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < nearestDist) { nearestDist = dist; nearest = t.mesh; }
+        }
+    });
+    return nearest;
+}
+
+// ============================================
+// CRAFTING HELPERS
+// ============================================
+function canCraftGatheringStick(agent) {
+    return agent.inventory.wood >= TOOL_RECIPES.GATHERING_STICK.cost.wood &&
+           agent.inventory.vines >= TOOL_RECIPES.GATHERING_STICK.cost.vine &&
+           !agent.tools.gatheringStick;
+}
+
+function canCraftStoneAxe(agent) {
+    return agent.inventory.wood >= TOOL_RECIPES.STONE_AXE.cost.wood &&
+           agent.inventory.stone >= TOOL_RECIPES.STONE_AXE.cost.stone &&
+           agent.inventory.vines >= TOOL_RECIPES.STONE_AXE.cost.vine &&
+           !agent.tools.stoneAxe;
+}
+
+function canCraftSpear(agent) {
+    return agent.inventory.wood >= TOOL_RECIPES.SPEAR.cost.wood &&
+           agent.inventory.vines >= TOOL_RECIPES.SPEAR.cost.vine &&
+           !agent.tools.spear;
+}
+
+function startCrafting(agent, itemId) {
+    if (itemId === 'gathering_stick' && canCraftGatheringStick(agent)) {
+        agent.state = 'crafting';
+        agent.craftingItem = 'gathering_stick';
+        agent.gatherTime = 3.0; // 3 seconds to craft
+        return true;
+    } else if (itemId === 'stone_axe' && canCraftStoneAxe(agent)) {
+        agent.state = 'crafting';
+        agent.craftingItem = 'stone_axe';
+        agent.gatherTime = 5.0; // 5 seconds to craft
+        return true;
+    } else if (itemId === 'spear' && canCraftSpear(agent)) {
+        agent.state = 'crafting';
+        agent.craftingItem = 'spear';
+        agent.gatherTime = 4.0;
+        return true;
+    }
+    return false;
+}
+
+function executeState(m, delta) {
+    const mesh = m.mesh;
+    
+    // Calculate gather speed bonus from tools
+    const gatherSpeedMult = m.tools.gatheringStick ? (1 + TOOL_RECIPES.GATHERING_STICK.effect.gatherSpeedBonus) : 1;
+    
+    switch (m.state) {
+        case 'resting':
+            m.restTime -= delta;
+            if (m.restTime <= 0) m.state = 'idle';
+            m.walkPhase += delta * 2;
+            mesh.position.y = getTerrainHeight(mesh.position.x, mesh.position.z) + Math.sin(m.walkPhase) * 0.01;
+            break;
+            
+        case 'gathering':
+            m.gatherTime -= delta * gatherSpeedMult;
+            if (m.gatherTime <= 0 && m.targetTree) {
+                if (m.targetTree.userData.coconuts > 0 && canCarryMore(m)) {
+                    m.targetTree.userData.coconuts--;
+                    m.inventory.coconuts++;
+                    m.coconutsGathered = (m.coconutsGathered || 0) + 1;
+                    // Skill improves with experience
+                    m.skill = Math.min(1.0, (m.skill || 0.5) + 0.015);
+                    
+                    // Use tool durability
+                    if (m.tools.gatheringStick) {
+                        m.tools.gatheringStick.durability--;
+                        if (m.tools.gatheringStick.durability <= 0) {
+                            m.tools.gatheringStick = null;
+                            logTest(`🔧 ${m.id}'s gathering stick broke!`, 'warning');
+                        }
+                    }
+                    
+                    // Visual feedback
+                    dropCoconut(m.targetTree, m.mesh.position);
+                    scheduleCoconutRespawn(m.targetTree);
+                    
+                    m.lastReward = (m.lastReward || 0) + 5.0;
+                    m.totalReward = (m.totalReward || 0) + 5.0;
+                    m.energy -= RESOURCES.COCONUT.energyCost;
+                    playSound('gather', 0.2);
+                    logTest(`🌴 ${m.id} gathered coconut! (inv: ${m.inventory.coconuts})`, 'info');
+                }
+                m.targetTree = null;
+                m.state = 'idle';
+            }
+            break;
+            
+        case 'gathering_wood':
+            m.gatherTime -= delta;
+            if (m.gatherTime <= 0 && m.targetStick) {
+                if (!m.targetStick.collected && canCarryMore(m)) {
+                    m.targetStick.collected = true;
+                    m.targetStick.mesh.visible = false;
+                    m.targetStick.respawnTime = Date.now() + 30000; // Respawn in 30s
+                    m.inventory.wood++;
+                    
+                    m.lastReward = (m.lastReward || 0) + 2.0;
+                    m.totalReward = (m.totalReward || 0) + 2.0;
+                    m.energy -= RESOURCES.WOOD.energyCost;
+                    playSound('pickup', 0.15);
+                    logTest(`🪵 ${m.id} gathered wood! (inv: ${m.inventory.wood})`, 'info');
+                }
+                m.targetStick = null;
+                // After gathering, immediately plan to deposit if carrying anything
+                m.state = 'idle';
+                const invTotalAfter = (m.inventory.coconuts || 0) + (m.inventory.wood || 0) + (m.inventory.stone || 0) + (m.inventory.vines || 0);
+                if (invTotalAfter > 0 && m.hunger > 0.35) {
+                    m.goingToStash = true;
+                }
+            }
+            break;
+            
+        case 'gathering_stone':
+            m.gatherTime -= delta;
+            if (m.gatherTime <= 0 && m.targetRock) {
+                if (m.targetRock.mesh.userData.stoneAmount > 0 && canCarryMore(m)) {
+                    m.targetRock.mesh.userData.stoneAmount--;
+                    m.inventory.stone++;
+                    
+                    // Respawn stone after delay
+                    if (m.targetRock.mesh.userData.stoneAmount <= 0) {
+                        setTimeout(() => {
+                            if (m.targetRock && m.targetRock.mesh) {
+                                m.targetRock.mesh.userData.stoneAmount = 3 + Math.floor(Math.random() * 3);
+                            }
+                        }, m.targetRock.mesh.userData.respawnTime || 30000);
+                    }
+                    
+                    m.lastReward = (m.lastReward || 0) + 2.0;
+                    m.totalReward = (m.totalReward || 0) + 2.0;
+                    m.energy -= RESOURCES.STONE.energyCost;
+                    playSound('pickup', 0.2);
+                    logTest(`🪨 ${m.id} gathered stone! (inv: ${m.inventory.stone})`, 'info');
+                }
+                m.targetRock = null;
+                m.state = 'idle';
+                const invTotalAfterStone = (m.inventory.coconuts || 0) + (m.inventory.wood || 0) + (m.inventory.stone || 0) + (m.inventory.vines || 0);
+                if (invTotalAfterStone > 0 && m.hunger > 0.35) {
+                    m.goingToStash = true;
+                }
+            }
+            break;
+            
+        case 'gathering_vine':
+            m.gatherTime -= delta;
+            if (m.gatherTime <= 0 && m.targetBush) {
+                if (m.targetBush.mesh.userData.vineAmount > 0 && canCarryMore(m)) {
+                    m.targetBush.mesh.userData.vineAmount--;
+                    m.inventory.vines++;
+                    
+                    // Respawn vines after delay
+                    if (m.targetBush.mesh.userData.vineAmount <= 0) {
+                        setTimeout(() => {
+                            if (m.targetBush && m.targetBush.mesh) {
+                                m.targetBush.mesh.userData.vineAmount = 2 + Math.floor(Math.random() * 2);
+                            }
+                        }, m.targetBush.mesh.userData.respawnTime || 20000);
+                    }
+                    
+                    m.lastReward = (m.lastReward || 0) + 2.0;
+                    m.totalReward = (m.totalReward || 0) + 2.0;
+                    m.energy -= RESOURCES.VINE.energyCost;
+                    playSound('gather', 0.15);
+                    logTest(`🌿 ${m.id} gathered vine! (inv: ${m.inventory.vines})`, 'info');
+                }
+                m.targetBush = null;
+                m.state = 'idle';
+                const invTotalAfterVine = (m.inventory.coconuts || 0) + (m.inventory.wood || 0) + (m.inventory.stone || 0) + (m.inventory.vines || 0);
+                if (invTotalAfterVine > 0 && m.hunger > 0.35) {
+                    m.goingToStash = true;
+                }
+            }
+            break;
+            
+        case 'crafting':
+            m.gatherTime -= delta;
+            if (m.gatherTime <= 0) {
+                // Complete crafting based on what was being crafted
+                if (m.craftingItem === 'gathering_stick' && canCraftGatheringStick(m)) {
+                    m.inventory.wood -= TOOL_RECIPES.GATHERING_STICK.cost.wood;
+                    m.inventory.vines -= TOOL_RECIPES.GATHERING_STICK.cost.vine;
+                    m.tools.gatheringStick = { durability: TOOL_RECIPES.GATHERING_STICK.durability };
+                    
+                    m.lastReward = (m.lastReward || 0) + 10.0;
+                    m.totalReward = (m.totalReward || 0) + 10.0;
+                    playSound('pickup', 0.3);
+                    logTest(`🔧 ${m.id} crafted a Gathering Stick!`, 'success');
+                } else if (m.craftingItem === 'stone_axe' && canCraftStoneAxe(m)) {
+                    m.inventory.wood -= TOOL_RECIPES.STONE_AXE.cost.wood;
+                    m.inventory.stone -= TOOL_RECIPES.STONE_AXE.cost.stone;
+                    m.inventory.vines -= TOOL_RECIPES.STONE_AXE.cost.vine;
+                    m.tools.stoneAxe = { durability: TOOL_RECIPES.STONE_AXE.durability };
+                    
+                    m.lastReward = (m.lastReward || 0) + 15.0;
+                    m.totalReward = (m.totalReward || 0) + 15.0;
+                    playSound('pickup', 0.3);
+                    logTest(`🪓 ${m.id} crafted a Stone Axe!`, 'success');
+                } else if (m.craftingItem === 'spear' && canCraftSpear(m)) {
+                    m.inventory.wood -= TOOL_RECIPES.SPEAR.cost.wood;
+                    m.inventory.vines -= TOOL_RECIPES.SPEAR.cost.vine;
+                    m.tools.spear = { durability: TOOL_RECIPES.SPEAR.durability };
+                    
+                    m.lastReward = (m.lastReward || 0) + 20.0;
+                    m.totalReward = (m.totalReward || 0) + 20.0;
+                    playSound('pickup', 0.35);
+                    logTest(`🎯 ${m.id} crafted a Spear (from inventory)`, 'success');
+                }
+                m.craftingItem = null;
+                m.state = 'idle';
+            }
+            break;
+            
+        case 'pickingUp':
+            m.gatherTime -= delta;
+            if (m.gatherTime <= 0 && m.targetCoconut) {
+                // Pick up ground coconut
+                if (canCarryMore(m)) {
+                    const idx = groundCoconuts.indexOf(m.targetCoconut);
+                    if (idx >= 0) {
+                        scene.remove(m.targetCoconut.mesh);
+                        groundCoconuts.splice(idx, 1);
+                        m.inventory.coconuts++;
+                        m.coconutsGathered = (m.coconutsGathered || 0) + 1;
+                        m.skill = Math.min(1.0, (m.skill || 0.5) + 0.01);
+                        playSound('pickup', 0.2);
+                        logTest(`🥥 ${m.id} picked up coconut! (inv: ${m.inventory.coconuts})`, 'success');
+                    }
+                }
+                m.targetCoconut = null;
+                m.state = 'idle';
+                // After picking up food, either eat if hungry or go stash
+                if (m.hunger < 0.5 && m.inventory.coconuts > 0) {
+                    m.state = 'eating';
+                } else if (m.hunger > 0.35 && m.inventory.coconuts > 0) {
+                    m.goingToStash = true;
+                }
+            }
+            break;
+            
+        case 'eating':
+            if (m.inventory.coconuts > 0) {
+                m.inventory.coconuts--;
+                m.hunger = Math.min(1, m.hunger + CONFIG.coconutNutrition);
+                playSound('eat', 0.15);
+                m.lastAction = 'eat';
+                m.lastReward = (m.lastReward || 0) + 100.0; // BIG reward for eating
+                m.totalReward = (m.totalReward || 0) + 100.0;
+                m.coconutsEaten = (m.coconutsEaten || 0) + 1;
+                logTest(`🥥 ${m.id} ate coconut #${m.coconutsEaten}! (${(m.hunger * 100).toFixed(0)}% full)`, 'success');
+            }
+            m.state = 'idle';
+            break;
+            
+        case 'giving':
+            // Give a coconut to a nearby hungry agent
+            if (m.targetAgent && m.targetAgent.alive && m.inventory.coconuts > 0) {
+                const dx = m.targetAgent.mesh.position.x - m.mesh.position.x;
+                const dz = m.targetAgent.mesh.position.z - m.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                if (dist < 3) {
+                    // Close enough to give
+                    m.inventory.coconuts--;
+                    m.targetAgent.inventory.coconuts++;
+                    playSound('pickup', 0.2);
+                    m.lastAction = 'give';
+                    m.lastReward = (m.lastReward || 0) + 30.0; // Reward for helping others
+                    m.totalReward = (m.totalReward || 0) + 30.0;
+                    m.coconutsGiven = (m.coconutsGiven || 0) + 1;
+                    logTest(`🤝 ${m.id} gave coconut to ${m.targetAgent.id}! (${m.coconutsGiven} given total)`, 'success');
+                    m.targetAgent = null;
+                    m.state = 'idle';
+                } else {
+                    // Walk toward target agent
+                    m.targetAngle = Math.atan2(dx, dz);
+                    m.state = 'walking';
+                }
+            } else {
+                m.targetAgent = null;
+                m.state = 'idle';
+            }
+            break;
+            
+        case 'walking':
+            m.walkPhase += delta * CONFIG.agentSpeed * 5;
+            const legSwing = Math.sin(m.walkPhase) * 0.35;
+            m.leftLeg.rotation.x = legSwing;
+            m.rightLeg.rotation.x = -legSwing;
+            m.leftArm.rotation.x = -legSwing * 0.5;
+            m.rightArm.rotation.x = legSwing * 0.5;
+            
+            // COCONUT DROP CHANCE while walking (based on skill and carrying amount)
+            if (m.inventory.coconuts > 0) {
+                // Higher chance to drop when carrying more, lower when more skilled
+                const carryPenalty = (m.inventory.coconuts / 6) * 0.015; // More coconuts = more likely to drop
+                const skillBonus = (m.skill || 0.5) * 0.012; // Higher skill = less likely to drop
+                const dropChance = Math.max(0, carryPenalty - skillBonus) * delta;
+                
+                if (seededRandom() < dropChance) {
+                    // Drop a coconut!
+                    m.inventory.coconuts--;
+                    dropCoconutAtPosition(m.mesh.position.x, m.mesh.position.z);
+                    playSound('coconut_drop', 0.3);
+                    logTest(`💨 ${m.id} dropped a coconut! (skill: ${(m.skill * 100).toFixed(0)}%)`, 'warning');
+                }
+            }
+            
+            // Check if targeting ground coconut
+            if (m.targetCoconut) {
+                const gcx = m.targetCoconut.mesh.position.x - mesh.position.x;
+                const gcz = m.targetCoconut.mesh.position.z - mesh.position.z;
+                const gcDist = Math.sqrt(gcx * gcx + gcz * gcz);
+                if (gcDist < 1.5) {
+                    m.state = 'pickingUp';
+                    m.gatherTime = RESOURCES.COCONUT.gatherTime * 0.5;
+                    logTest(`🤲 ${m.id} started picking up a ground coconut`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(gcx, gcz);
+                }
+            } else if (m.goingToStash) {
+                const sx = STASH_POSITION.x - mesh.position.x;
+                const sz = STASH_POSITION.z - mesh.position.z;
+                const sDist = Math.sqrt(sx * sx + sz * sz);
+                if (sDist < 2) {
+                    // Deposit all carried resources into shared stash
+                    sharedStash.coconuts += m.inventory.coconuts;
+                    sharedStash.wood += m.inventory.wood;
+                    sharedStash.stone += m.inventory.stone;
+                    sharedStash.vines += m.inventory.vines;
+                    sharedStash.mullet += m.inventory.mullet || 0;
+                    sharedStash.parrotfish += m.inventory.parrotfish || 0;
+                    sharedStash.grouper += m.inventory.grouper || 0;
+                    updateStashVisuals();
+                    logTest(`📦 ${m.id} completed objective: deposit at hut (🥥${m.inventory.coconuts}, 🪵${m.inventory.wood}, 🪨${m.inventory.stone}, 🌿${m.inventory.vines}, 🐟${(m.inventory.mullet||0)})`, 'success');
+                    m.inventory.coconuts = 0;
+                    m.inventory.wood = 0;
+                    m.inventory.stone = 0;
+                    m.inventory.vines = 0;
+                    m.inventory.mullet = 0;
+                    m.inventory.parrotfish = 0;
+                    m.inventory.grouper = 0;
+                    
+                    // Optionally eat from stash if we walked here to eat and food is available
+                    if (m.wantsToEatFromStash && sharedStash.coconuts > 0 && m.hunger < 0.95) {
+                        sharedStash.coconuts--;
+                        m.hunger = Math.min(1, m.hunger + CONFIG.coconutNutrition);
+                        updateStashVisuals();
+                        logTest(`🍽️ ${m.id} ate from hut stash (hunger ${(m.hunger * 100).toFixed(0)}%)`, 'success');
+                        m.currentObjective = 'eat (hut stash, done)';
+                    } else if (m.currentObjective === 'deposit') {
+                        m.currentObjective = 'deposit (done)';
+                    }
+                    m.goingToStash = false;
+                    m.wantsToEatFromStash = false;
+                    m.state = 'idle';
+                } else {
+                    m.targetAngle = Math.atan2(sx, sz);
+                }
+            } else if (m.targetFish) {
+                const fx = m.targetFish.mesh.position.x;
+                const fz = m.targetFish.mesh.position.z;
+                // Stand slightly landward from the fish so we don't enter water
+                const toCenter = Math.atan2(-fx, -fz);
+                const standDist = CONFIG.islandRadius * 0.95;
+                const standX = Math.cos(toCenter) * standDist;
+                const standZ = Math.sin(toCenter) * standDist;
+                const dx = standX - mesh.position.x;
+                const dz = standZ - mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 1.5) {
+                    m.state = 'fishing';
+                    // Base fish time scaled by (1 - fishingSkill)
+                    const baseTime = 4.0;
+                    const skillMult = 1 - (m.fishingSkill || 0);
+                    m.fishTime = baseTime * (0.5 + skillMult * 0.7);
+                    logTest(`🎣 ${m.id} started fishing for Mullet`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(dx, dz);
+                }
+            } else if (m.targetTree) {
+                const dx = m.targetTree.position.x - mesh.position.x;
+                const dz = m.targetTree.position.z - mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 3) {
+                    m.state = 'gathering';
+                    m.gatherTime = RESOURCES.COCONUT.gatherTime;
+                    logTest(`🌴 ${m.id} started gathering from a palm tree`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(dx, dz);
+                }
+            } else if (m.targetStick) {
+                // Walking to ground stick for wood
+                const sx = m.targetStick.mesh.position.x - mesh.position.x;
+                const sz = m.targetStick.mesh.position.z - mesh.position.z;
+                const sDist = Math.sqrt(sx * sx + sz * sz);
+                if (sDist < 1.5) {
+                    m.state = 'gathering_wood';
+                    m.gatherTime = RESOURCES.WOOD.gatherTime;
+                    logTest(`🪵 ${m.id} started gathering wood`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(sx, sz);
+                }
+            } else if (m.targetRock) {
+                // Walking to rock for stone
+                const rx = m.targetRock.mesh.position.x - mesh.position.x;
+                const rz = m.targetRock.mesh.position.z - mesh.position.z;
+                const rDist = Math.sqrt(rx * rx + rz * rz);
+                if (rDist < 2) {
+                    m.state = 'gathering_stone';
+                    m.gatherTime = RESOURCES.STONE.gatherTime;
+                    logTest(`🪨 ${m.id} started gathering stone`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(rx, rz);
+                }
+            } else if (m.targetBush) {
+                // Walking to bush for vines
+                const bx = m.targetBush.mesh.position.x - mesh.position.x;
+                const bz = m.targetBush.mesh.position.z - mesh.position.z;
+                const bDist = Math.sqrt(bx * bx + bz * bz);
+                if (bDist < 1.5) {
+                    m.state = 'gathering_vine';
+                    m.gatherTime = RESOURCES.VINE.gatherTime;
+                    logTest(`🌿 ${m.id} started gathering vines`, 'info');
+                } else {
+                    m.targetAngle = Math.atan2(bx, bz);
+                }
+            } else {
+                // More random wandering - prevent all walking same direction
+                if (seededRandom() < 0.15) {
+                    m.targetAngle += (seededRandom() - 0.5) * Math.PI * 1.2;
+                }
+                m.targetAngle += (seededRandom() - 0.5) * 0.1 * delta * 10;
+            }
+            
+            // Simple obstacle avoidance: steer away from nearby rocks/trees
+            let avoidAngle = 0;
+            let avoidStrength = 0;
+            const px = mesh.position.x;
+            const pz = mesh.position.z;
+            allRocks.forEach(r => {
+                const rx = r.mesh?.position.x - px;
+                const rz = r.mesh?.position.z - pz;
+                const dist2 = rx * rx + rz * rz;
+                if (dist2 > 0 && dist2 < 4) {
+                    const away = Math.atan2(-rx, -rz);
+                    avoidAngle += away;
+                    avoidStrength += 1;
+                }
+            });
+            allTrees.forEach(t => {
+                const tx = t.mesh?.position.x - px;
+                const tz = t.mesh?.position.z - pz;
+                const dist2 = tx * tx + tz * tz;
+                if (dist2 > 0 && dist2 < 4) {
+                    const away = Math.atan2(-tx, -tz);
+                    avoidAngle += away;
+                    avoidStrength += 1;
+                }
+            });
+            if (avoidStrength > 0) {
+                const avgAway = avoidAngle / avoidStrength;
+                // Blend target angle slightly away from obstacles
+                m.targetAngle = m.targetAngle * 0.8 + avgAway * 0.2;
+            }
+            
+            const angleDiff = m.targetAngle - mesh.rotation.y;
+            // Normalize angle difference to shortest path
+            let normalizedDiff = angleDiff;
+            while (normalizedDiff > Math.PI) normalizedDiff -= Math.PI * 2;
+            while (normalizedDiff < -Math.PI) normalizedDiff += Math.PI * 2;
+            mesh.rotation.y += normalizedDiff * delta * 4;
+            
+            // Add slight per-agent speed variation to break synchronization
+            const speedVariation = 0.9 + (parseInt(m.id.split('_')[1]) % 5) * 0.04; // 0.9-1.1x based on agent ID
+            const speed = CONFIG.agentSpeed * delta * speedVariation;
+            mesh.position.x += Math.sin(mesh.rotation.y) * speed;
+            mesh.position.z += Math.cos(mesh.rotation.y) * speed;
+            
+            const terrainY = getTerrainHeight(mesh.position.x, mesh.position.z);
+            mesh.position.y = terrainY + Math.abs(Math.sin(m.walkPhase)) * 0.04;
+            
+            const distFromCenter = Math.sqrt(mesh.position.x ** 2 + mesh.position.z ** 2);
+            // Check if approaching water or edge
+            if (distFromCenter > CONFIG.islandRadius * 0.7 || terrainY < CONFIG.waterLevel + 3) {
+                // Turn toward center aggressively
+                const toCenter = Math.atan2(-mesh.position.x, -mesh.position.z);
+                m.targetAngle = toCenter + (seededRandom() - 0.5) * 0.4;
+                m.targetTree = null;
+                m.targetCoconut = null;
+            }
+            
+            // Additional safety check - if in water, instant death (handled above, but double-check)
+            if (terrainY < CONFIG.waterLevel + 0.5) {
+                // This should trigger instant death in updateTribeMembers, but add safety turn
+                m.targetAngle = Math.atan2(-mesh.position.x, -mesh.position.z);
+            }
+            break;
+            
+        case 'fishing':
+            m.fishTime -= delta;
+            // Gentle bob while fishing
+            m.walkPhase += delta * 1.5;
+            mesh.position.y = getTerrainHeight(mesh.position.x, mesh.position.z) + Math.sin(m.walkPhase) * 0.03;
+            
+            if (m.fishTime <= 0) {
+                // Simple Tier 1 fishing: catch the targeted mullet if still alive
+                const skill = m.fishingSkill || 0;
+                let baseChance = 0.4;
+                if (m.tools.spear) baseChance += TOOL_RECIPES.SPEAR.effect.fishingBonus; // Spear bonus
+                const catchChance = Math.min(0.95, baseChance + skill * 0.5); // cap at 95%
+                if (m.targetFish && m.targetFish.alive && Math.random() < catchChance && canCarryMore(m)) {
+                    m.targetFish.alive = false;
+                    m.targetFish.mesh.visible = false;
+                    m.inventory.mullet = (m.inventory.mullet || 0) + 1;
+                    m.fishCaught = (m.fishCaught || 0) + 1;
+                    
+                    // Spear durability
+                    if (m.tools.spear) {
+                        m.tools.spear.durability--;
+                        if (m.tools.spear.durability <= 0) {
+                            logTest(`🎯 ${m.id}'s spear broke!`, 'warning');
+                            m.tools.spear = null;
+                        }
+                    }
+                    // Respawn this fish later
+                    setTimeout(() => {
+                        m.targetFish.alive = true;
+                        m.targetFish.mesh.visible = true;
+                    }, 30000 + Math.random() * 30000);
+                    // Improve fishing skill slightly
+                    m.fishingSkill = Math.min(1.0, skill + 0.02);
+                    m.lastReward = (m.lastReward || 0) + 10.0;
+                    m.totalReward = (m.totalReward || 0) + 10.0;
+                    playSound('pickup', 0.25);
+                    logTest(`🎣 ${m.id} caught a Mullet! (inv: ${m.inventory.mullet}, fish skill: ${(m.fishingSkill * 100).toFixed(0)}%, spear: ${m.tools.spear ? 'yes' : 'no'})`, 'success');
+                } else {
+                    logTest(`🎣 ${m.id} failed to catch a fish this time`, 'warning');
+                }
+                m.targetFish = null;
+                m.state = 'idle';
+            }
+            break;
+            
+        default: // idle state
+            m.walkPhase += delta * 2;
+            mesh.position.y = getTerrainHeight(mesh.position.x, mesh.position.z) + Math.sin(m.walkPhase) * 0.01;
+            m.leftLeg.rotation.x *= 0.9;
+            m.rightLeg.rotation.x *= 0.9;
+            m.leftArm.rotation.x *= 0.9;
+            m.rightArm.rotation.x *= 0.9;
+            // Survival reward for being alive
+            m.lastReward = (m.lastReward || 0) + 0.01;
+            
+            // Subtle munching sound if has coconuts
+            if (m.inventory.coconuts > 0 && Math.random() < delta * 0.3) {
+                playSound('munch_idle', 0.1);
+            }
+            
+            // More likely to start wandering
+            if (seededRandom() < 0.08) {
+                m.state = 'walking';
+                m.targetTree = null;
+                m.targetCoconut = null;
+                // Add variation based on agent ID
+                const baseAngle = seededRandom() * Math.PI * 2;
+                const idOffset = (parseInt(m.id.split('_')[1]) || 0) * 0.3;
+                m.targetAngle = baseAngle + idOffset;
+            }
+    }
+}
+
+// Schedule coconut respawn on tree after it's been picked
+function scheduleCoconutRespawn(tree) {
+    if (!tree || !tree.userData) return;
+    
+    // Mark tree as regenerating
+    tree.userData.regenerating = true;
+    tree.userData.regenStartTime = Date.now();
+    
+    setTimeout(() => {
+        if (tree && tree.userData) {
+            const maxCoconuts = CONFIG.treeCoconutCapacity || 3;
+            if (tree.userData.coconuts < maxCoconuts) {
+                tree.userData.coconuts++;
+                tree.userData.regenerating = false;
+                logTest(`🌴 Tree regrew a coconut (${tree.userData.coconuts}/${maxCoconuts})`, 'info');
+            }
+        }
+    }, CONFIG.coconutRespawnTime);
+}
+
+// COCONUT SYSTEM - Trees have limited coconuts that regenerate slowly
+let coconutDropTimers = new Map(); // tree -> lastDropTime (in simulation time)
+
+function autoDropCoconuts(delta) {
+    const DROP_INTERVAL = 25.0; // Drop every 25 seconds per tree - very slow!
+    const MAX_GROUND = 8; // Very few coconuts on ground - scarcity!
+    
+    allTrees.forEach(t => {
+        if (t.mesh.userData.treeType !== 'palm') return;
+        if (groundCoconuts.length >= MAX_GROUND) return;
+        
+        // Check if tree has coconuts to drop
+        const treeCoconuts = t.mesh.userData.coconuts || 0;
+        if (treeCoconuts <= 0) return; // No coconuts on this tree!
+        
+        const treeId = t.mesh.userData.id || t.mesh.uuid;
+        const lastDrop = coconutDropTimers.get(treeId) || 0;
+        const currentTime = coconutDropTimers.get('_simTime') || 0;
+        
+        // Update simulation time
+        coconutDropTimers.set('_simTime', currentTime + delta);
+        
+        // Time to drop! (respects simulation speed)
+        if (currentTime - lastDrop >= DROP_INTERVAL) {
+            coconutDropTimers.set(treeId, currentTime);
+            
+            // Decrease tree's coconut count
+            t.mesh.userData.coconuts--;
+            
+            // Get tree position - drop from actual tree top (14-24m tall)
+            const worldPos = new THREE.Vector3();
+            t.mesh.getWorldPosition(worldPos);
+            worldPos.y += 16 + seededRandom() * 6;
+            worldPos.x += (seededRandom() - 0.5) * 3;
+            worldPos.z += (seededRandom() - 0.5) * 3;
+            
+            // Create falling coconut
+            const coconutMat = new THREE.MeshStandardMaterial({ 
+                color: 0x8b4513, 
+                roughness: 0.6,
+                emissive: 0x442211,
+                emissiveIntensity: 0.4
+            });
+            const coconutGeo = new THREE.SphereGeometry(0.6, 12, 12);
+            const coconut = new THREE.Mesh(coconutGeo, coconutMat);
+            coconut.position.copy(worldPos);
+            coconut.castShadow = true;
+            coconut.scale.set(1.2, 0.9, 1.2);
+            scene.add(coconut);
+            
+            fallingCoconuts.push({
+                mesh: coconut,
+                velocity: new THREE.Vector3((seededRandom() - 0.5) * 1.5, 0, (seededRandom() - 0.5) * 1.5),
+                bounces: 0
+            });
+            
+            // Schedule tree to regrow this coconut
+            scheduleCoconutRespawn(t.mesh);
+            
+            logTest(`🥥 Coconut dropped from tree (${t.mesh.userData.coconuts} left)`, 'info');
+        }
+    });
+}
+
+function updateFish(delta) {
+    fishList.forEach(f => {
+        if (!f.alive) return;
+        f.angle += delta * f.speed * 0.25;
+        f.mesh.position.x = Math.cos(f.angle) * f.dist;
+        f.mesh.position.z = Math.sin(f.angle) * f.dist;
+        f.mesh.position.y = f.yBase + Math.sin(clock.elapsedTime * 2 + f.angle) * 0.3;
+        f.mesh.rotation.y = f.angle + Math.PI / 2;
+    });
+}
+
+function regenerateCoconuts(delta) {
+    allTrees.forEach(t => {
+        if (t.mesh.userData.treeType === 'palm' && t.mesh.userData.coconuts < 4) {
+            if (seededRandom() < 0.003 * delta) {
+                t.mesh.userData.coconuts++;
+                const coconutMat = new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 0.85 });
+                const coconutGeo = new THREE.SphereGeometry(0.25, 8, 8);
+                const coconut = new THREE.Mesh(coconutGeo, coconutMat);
+                const angle = seededRandom() * Math.PI * 2;
+                coconut.position.set(Math.cos(angle) * 0.5, 5 + seededRandom() * 2, Math.sin(angle) * 0.5);
+                coconut.userData.isCoconut = true;
+                t.mesh.add(coconut);
+            }
+        }
+    });
+}
+
+// ============================================
+// CAMERA
+// ============================================
+function setupControls() {
+    document.addEventListener('keydown', e => {
+        switch (e.code) {
+            case 'KeyW': controls.forward = true; break;
+            case 'KeyS': controls.backward = true; break;
+            case 'KeyA': controls.left = true; break;
+            case 'KeyD': controls.right = true; break;
+            case 'KeyQ': controls.down = true; break;
+            case 'KeyE': controls.up = true; break;
+            case 'ShiftLeft': case 'ShiftRight': controls.shift = true; break;
+        }
+    });
+    
+    document.addEventListener('keyup', e => {
+        switch (e.code) {
+            case 'KeyW': controls.forward = false; break;
+            case 'KeyS': controls.backward = false; break;
+            case 'KeyA': controls.left = false; break;
+            case 'KeyD': controls.right = false; break;
+            case 'KeyQ': controls.down = false; break;
+            case 'KeyE': controls.up = false; break;
+            case 'ShiftLeft': case 'ShiftRight': controls.shift = false; break;
+        }
+    });
+    
+    renderer.domElement.addEventListener('click', () => {
+        if (CONFIG.cameraMode === 'free') renderer.domElement.requestPointerLock();
+    });
+    
+    document.addEventListener('pointerlockchange', () => {
+        isPointerLocked = document.pointerLockElement === renderer.domElement;
+        const hint = document.getElementById('controls-hint');
+        if (hint) hint.classList.toggle('hidden', isPointerLocked);
+    });
+    
+    document.addEventListener('mousemove', e => {
+        if (!isPointerLocked || CONFIG.cameraMode !== 'free') return;
+        // Standard FPS: move mouse right = look right, move mouse up = look up
+        cameraYaw -= e.movementX * CONFIG.cameraSensitivity;
+        cameraPitch -= e.movementY * CONFIG.cameraSensitivity;
+        cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
+    });
+}
+
+// Initialize camera to look at island center when switching to free mode
+function initFreeCameraLook() {
+    const dx = 0 - camera.position.x;
+    const dz = 0 - camera.position.z;
+    cameraYaw = Math.atan2(dx, dz);
+    cameraPitch = -0.15; // Slight downward look
+}
+
+function updateCamera(delta) {
+    if (CONFIG.cameraMode === 'orbit') {
+        const orbitRadius = CONFIG.islandRadius * 2.0; // Good distance from island
+        const orbitHeight = CONFIG.islandRadius * 1.2; // Scale height with island size
+        orbitCameraAngle += delta * 0.03; // Smooth rotation
+        camera.position.set(
+            Math.cos(orbitCameraAngle) * orbitRadius, 
+            orbitHeight, 
+            Math.sin(orbitCameraAngle) * orbitRadius
+        );
+        camera.lookAt(0, 5, 0); // Look at island center
+    } else if (CONFIG.cameraMode === 'tactical') {
+        // Top-down tactical view - ZOOMED IN
+        camera.position.set(0, 280, CONFIG.islandRadius * 0.2);
+        camera.lookAt(0, 0, 0);
+        camera.rotation.z = 0; // Ensure north is up
+    } else {
+        const speed = CONFIG.cameraSpeed * (controls.shift ? 2.5 : 1) * delta;
+        
+        // Simple FPS camera using quaternion
+        const euler = new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ');
+        const quat = new THREE.Quaternion().setFromEuler(euler);
+        
+        // Forward/right from quaternion
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+        
+        // Movement on XZ plane only for forward/back/strafe
+        forward.y = 0;
+        forward.normalize();
+        right.y = 0;
+        right.normalize();
+        
+        if (controls.forward) camera.position.addScaledVector(forward, speed);
+        if (controls.backward) camera.position.addScaledVector(forward, -speed);
+        if (controls.left) camera.position.addScaledVector(right, -speed);
+        if (controls.right) camera.position.addScaledVector(right, speed);
+        if (controls.up) camera.position.y += speed;
+        if (controls.down) camera.position.y -= speed;
+        
+        const minY = Math.max(getTerrainHeight(camera.position.x, camera.position.z) + 3, 5);
+        camera.position.y = Math.max(camera.position.y, minY);
+        
+        // Apply rotation
+        camera.quaternion.copy(quat);
+    }
+}
+
+// ============================================
+// GUI - WITH RESTART BUTTON
+// ============================================
+function setupGUI() {
+    const gui = new GUI({ container: document.getElementById('gui-container') });
+    gui.title('🏝️ Island Controls');
+    
+    const simFolder = gui.addFolder('Simulation');
+    simFolder.add(CONFIG, 'tribeMembers', 1, CONFIG.maxAgents, 1).name('Agents').onChange(restartSimulation);
+    simFolder.add(CONFIG, 'simulationSpeed', 0.5, CONFIG.maxSimulationSpeed, 0.5).name('Speed (0.5x-50x)');
+    const simControls = {
+        pause: () => {
+            simulationPaused = !simulationPaused;
+            logTest(simulationPaused ? '⏸ Simulation paused' : '▶️ Simulation resumed', simulationPaused ? 'warning' : 'success');
+        }
+    };
+    simFolder.add(simControls, 'pause').name('⏯ Pause / Resume');
+    simFolder.add({ restart: restartSimulation }, 'restart').name('🔄 RESTART');
+    
+    const timeFolder = gui.addFolder('Time of Day');
+    timeFolder.add(CONFIG, 'timeOfDay', 0, 1, 0.01).name('Time').onChange(updateTimeOfDay).listen();
+    timeFolder.add(CONFIG, 'autoPlayTime').name('Auto-play');
+    
+    const camFolder = gui.addFolder('Camera');
+    camFolder.add(CONFIG, 'cameraSpeed', 20, 200, 10).name('Speed');
+    camFolder.add(CONFIG, 'cameraMode', ['free', 'orbit', 'tactical']).name('Mode').onChange(mode => {
+        if (mode === 'free') {
+            initFreeCameraLook();
+        } else if (document.pointerLockElement === renderer.domElement) {
+            document.exitPointerLock();
+        }
+    });
+    
+    const qualityFolder = gui.addFolder('Quality');
+    qualityFolder.add(CONFIG, 'visualQuality', ['high', 'low', 'dogshit']).name('Visual').onChange(v => {
+        if (v === 'high') {
+            renderer.shadowMap.enabled = true;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            scene.fog = new THREE.FogExp2(0x87ceeb, 0.002);
+        } else if (v === 'low') {
+            renderer.shadowMap.enabled = false;
+            renderer.setPixelRatio(1);
+            scene.fog = new THREE.FogExp2(0x87ceeb, 0.002);
+        } else {
+            // DOGSHIT MODE - retro but playable
+            renderer.shadowMap.enabled = false;
+            renderer.setPixelRatio(0.35); // Low res but visible
+            scene.fog = new THREE.FogExp2(0x556677, 0.008); // Light fog
+        }
+    });
+    
+    const soundControls = { muted: false };
+    qualityFolder.add(soundControls, 'muted').name('🔇 Mute Sound').onChange(muted => {
+        setMasterMute(muted);
+        logTest(muted ? '🔇 Sound muted' : '🔊 Sound enabled', 'info');
+    });
+    
+    const debugFolder = gui.addFolder('Debug');
+    debugFolder.add(CONFIG, 'showDebug').name('Show Stats').onChange(v => {
+        document.getElementById('debug-overlay').style.display = v ? 'block' : 'none';
+    });
+    debugFolder.add({ runChecks: runSanityChecks }, 'runChecks').name('🧪 Sanity Checks');
+    debugFolder.add({ speedTest: runSpeedTest }, 'speedTest').name('⚡ Speed Test');
+    
+    simFolder.open();
+    timeFolder.open();
+}
+
+// ============================================
+// RESTART SIMULATION
+// ============================================
+function restartSimulation() {
+    logTest('Restarting simulation...', 'info');
+    resetSeed(CONFIG.seed);
+    totalDeaths = 0;
+    
+    // Reset agents
+    createTribeMembers();
+    
+    // Reset coconuts on all palm trees
+    allTrees.forEach(t => {
+        if (t.mesh.userData.treeType === 'palm') {
+            // Remove old coconuts
+            const oldCoconuts = t.mesh.children.filter(c => c.userData.isCoconut);
+            oldCoconuts.forEach(c => t.mesh.remove(c));
+            // Add new coconuts
+            t.mesh.userData.coconuts = 2 + Math.floor(seededRandom() * 3);
+            addCoconutsToTree(t.mesh);
+        }
+    });
+    
+    logTest('Simulation restarted!', 'success');
+}
+
+// ============================================
+// MIST ANIMATION - SMOOTH FOG TRANSITIONS
+// ============================================
+const fogKeyframes = [
+    { t: 0.00, color: 0x0a1025, density: 0.00025 },
+    { t: 0.08, color: 0x0a1025, density: 0.00025 },
+    { t: 0.15, color: 0xffccaa, density: 0.00020 },
+    { t: 0.25, color: 0xe8e0d8, density: 0.00018 },
+    { t: 0.50, color: 0xc0d8f0, density: 0.00012 },
+    { t: 0.75, color: 0xe8e0d8, density: 0.00018 },
+    { t: 0.85, color: 0xffccaa, density: 0.00020 },
+    { t: 0.92, color: 0x0a1025, density: 0.00025 },
+    { t: 1.00, color: 0x0a1025, density: 0.00025 }
+];
+
+function updateMist(delta) {
+    if (!scene.fog) return;
+    
+    const t = CONFIG.timeOfDay;
+    
+    // Find surrounding keyframes
+    let k1 = fogKeyframes[0], k2 = fogKeyframes[1];
+    for (let i = 0; i < fogKeyframes.length - 1; i++) {
+        if (t >= fogKeyframes[i].t && t <= fogKeyframes[i + 1].t) {
+            k1 = fogKeyframes[i];
+            k2 = fogKeyframes[i + 1];
+            break;
+        }
+    }
+    
+    // Smooth interpolation
+    const range = k2.t - k1.t;
+    const lerp = range > 0 ? (t - k1.t) / range : 0;
+    const smoothLerp = lerp * lerp * (3 - 2 * lerp);
+    
+    const fogColor = lerpColor(k1.color, k2.color, smoothLerp);
+    const fogDensity = k1.density + (k2.density - k1.density) * smoothLerp;
+    
+    scene.fog.color.setHex(fogColor);
+    scene.fog.density = fogDensity;
+    
+    // Update mist plane opacity based on time
+    mistPlanes.forEach(m => {
+        m.material.opacity = t < 0.1 || t > 0.9 ? 0.06 : 0.03;
+    });
+}
+
+// ============================================
+// ANIMATION LOOP
+// ============================================
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const frameDelta = Math.min(clock.getDelta(), 0.1);
+    
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFPSUpdate >= 1000) {
+        currentFPS = frameCount;
+        stepsPerSecond = stepCountThisSecond;
+        frameCount = 0;
+        stepCountThisSecond = 0;
+        lastFPSUpdate = now;
+    }
+    
+    const effectiveSimSpeed = simulationPaused ? 0 : CONFIG.simulationSpeed;
+    simulationAccumulator += frameDelta * effectiveSimSpeed;
+    
+    let steps = 0;
+    while (simulationAccumulator >= CONFIG.fixedTimestep && steps < CONFIG.maxStepsPerFrame) {
+        stepSimulation(CONFIG.fixedTimestep);
+        simulationAccumulator -= CONFIG.fixedTimestep;
+        steps++;
+        totalSimSteps++;
+        stepCountThisSecond++;
+    }
+    
+    updateVisuals(frameDelta);
+    
+    const aliveAgents = tribeMembers.filter(m => m.alive).length;
+    const coconutsAvailable = allTrees.reduce((s, t) => s + (t.mesh.userData.coconuts || 0), 0);
+    
+    updateStats({
+        fps: currentFPS,
+        stepsPerSecond,
+        agentsAlive: aliveAgents,
+        deaths: totalDeaths,
+        coconutsAvailable
+    });
+    
+    renderer.render(scene, camera);
+}
+
+function stepSimulation(delta) {
+    updateTribeMembers(delta);
+    autoDropCoconuts(delta);
+    updateGroundSticks(); // Respawn collected sticks
+    
+    // Check simple win condition: tribe has reached 100 of each core hut resource
+    const coreWin =
+        sharedStash.coconuts >= 100 &&
+        sharedStash.wood >= 100 &&
+        sharedStash.stone >= 100 &&
+        sharedStash.vines >= 100;
+    if (coreWin) {
+        simulationPaused = true;
+        logTest('🏁 Tribe victory: hut reached 100 of each core resource! (sim paused)', 'success');
+    }
+}
+
+function updateVisuals(delta) {
+    if (water) water.material.uniforms['time'].value += delta * 0.3;
+    updateCamera(delta);
+    updateFish(delta);
+    updateMist(delta);
+    updateProximityAudio(); // Proximity-based sound levels
+    // autoDropCoconuts moved to stepSimulation for proper speed scaling
+    updateShakingCoconuts(delta);
+    updateFallingCoconuts(delta);
+    
+    if (CONFIG.autoPlayTime) {
+        CONFIG.timeOfDay += delta * 0.012;
+        if (CONFIG.timeOfDay > 1) CONFIG.timeOfDay = 0;
+        updateTimeOfDay();
+    }
+}
+
+// Proximity-based audio - disabled (using stub at line 409)
+
+function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// ============================================
+// ML INFRASTRUCTURE - COMPREHENSIVE RL API
+// ============================================
+
+// Action Space Definition - EXPANDED for Phase 1
+const ACTIONS = {
+    NO_OP: 0,
+    MOVE_NORTH: 1,
+    MOVE_SOUTH: 2,
+    MOVE_EAST: 3,
+    MOVE_WEST: 4,
+    GATHER_COCONUT: 5,  // From palm trees
+    GATHER_WOOD: 6,     // From ground sticks
+    GATHER_STONE: 7,    // From rocks
+    GATHER_VINE: 8,     // From bushes
+    EAT: 9,
+    REST: 10,
+    PICKUP: 11,         // Pick up ground coconut
+    CRAFT_STICK: 12,    // Craft gathering stick
+    CRAFT_AXE: 13,      // Craft stone axe
+    GIVE: 14,
+    STEAL: 15
+};
+const ACTION_NAMES = Object.keys(ACTIONS);
+const ACTION_COUNT = ACTION_NAMES.length;
+
+// Episode Management
+let episodeState = {
+    stepCount: 0,
+    maxSteps: 10000,
+    started: false,
+    done: false,
+    dataCollection: false,
+    episodeData: [],
+    episodeHistory: [],
+    policyType: 'rule-based',
+    mlPolicy: null
+};
+
+// Reward function
+function calculateReward(agent) {
+    let reward = 0;
+    
+    // Survival reward
+    if (agent.alive) {
+        reward += 0.01;
+    } else {
+        reward -= 300.0; // Death penalty - WORSE THAN 10 COCONUTS
+    }
+    
+    // Hunger penalty
+    if (agent.alive) {
+        if (agent.hunger < 0.3) reward -= 0.02;
+        if (agent.hunger < 0.15) reward -= 0.03;
+    }
+    
+    // Water = instant death (handled in updateTribeMembers, death penalty applies)
+    
+    // Action rewards (from lastReward set in executeState)
+    reward += agent.lastReward || 0;
+    
+    return reward;
+}
+
+// Get comprehensive agent state observation
+function getAgentObservation(agent) {
+    const pos = agent.mesh.position;
+    
+    // Find nearest tree with coconuts
+    let nearestTree = null, nearestTreeDist = Infinity;
+    allTrees.forEach(t => {
+        if (t.mesh.userData.treeType === 'palm' && t.mesh.userData.coconuts > 0) {
+            const dx = t.mesh.position.x - pos.x;
+            const dz = t.mesh.position.z - pos.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < nearestTreeDist) {
+                nearestTreeDist = dist;
+                nearestTree = { dist, angle: Math.atan2(dx, dz), coconuts: t.mesh.userData.coconuts };
+            }
+        }
+    });
+    
+    // Find nearest ground coconut
+    let nearestCoconut = null, nearestCoconutDist = Infinity;
+    groundCoconuts.forEach(gc => {
+        const dx = gc.mesh.position.x - pos.x;
+        const dz = gc.mesh.position.z - pos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestCoconutDist) {
+            nearestCoconutDist = dist;
+            nearestCoconut = { dist, angle: Math.atan2(dx, dz) };
+        }
+    });
+    
+    // Find nearest agent
+    let nearestAgent = null, nearestAgentDist = Infinity;
+    tribeMembers.forEach(other => {
+        if (other === agent || !other.alive) return;
+        const dx = other.mesh.position.x - pos.x;
+        const dz = other.mesh.position.z - pos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < nearestAgentDist) {
+            nearestAgentDist = dist;
+            nearestAgent = { dist, angle: Math.atan2(dx, dz), hunger: other.hunger, inventory: other.inventory.coconuts };
+        }
+    });
+    
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const distFromCenter = Math.sqrt(pos.x * pos.x + pos.z * pos.z);
+    
+    return {
+        id: agent.id,
+        position: { x: pos.x, y: pos.y, z: pos.z },
+        hunger: agent.hunger,
+        energy: agent.energy,
+        alive: agent.alive,
+        state: agent.state,
+        inventoryCount: agent.inventory.coconuts,
+        inWater: agent.inWater,
+        terrainHeight: terrainY,
+        distanceFromCenter: distFromCenter,
+        nearestTree: nearestTree || { dist: Infinity, angle: 0, coconuts: 0 },
+        nearestCoconut: nearestCoconut || { dist: Infinity, angle: 0 },
+        nearestAgent: nearestAgent || { dist: Infinity, angle: 0, hunger: 1, inventory: 0 },
+        canGather: nearestTreeDist < 5 && canCarryMore(agent),
+        canEat: agent.inventory.coconuts > 0,
+        canPickup: nearestCoconutDist < 3 && canCarryMore(agent),
+        canGive: agent.inventory.coconuts > 0 && nearestAgentDist < 2 && nearestAgent && nearestAgent.inventory < CONFIG.maxInventory,
+        canSteal: nearestAgentDist < 2 && nearestAgent && nearestAgent.inventory > 0
+    };
+}
+
+// Apply action to agent (for external ML control)
+function applyAction(agentId, action) {
+    const agent = tribeMembers.find(a => a.id === agentId);
+    if (!agent || !agent.alive) return false;
+    
+    agent.lastReward = 0; // Reset reward tracking
+    
+    switch (action) {
+        case ACTIONS.NO_OP:
+            agent.state = 'idle';
+            break;
+        case ACTIONS.MOVE_NORTH:
+            agent.state = 'walking';
+            let targetAngle = 0 + (seededRandom() - 0.5) * 0.6;
+            // Check if this direction leads to water
+            let checkX = agent.mesh.position.x + Math.sin(targetAngle) * 5;
+            let checkZ = agent.mesh.position.z + Math.cos(targetAngle) * 5;
+            if (getTerrainHeight(checkX, checkZ) < CONFIG.waterLevel + 2) {
+                // Water ahead! Turn toward center instead
+                targetAngle = Math.atan2(-agent.mesh.position.x, -agent.mesh.position.z) + (seededRandom() - 0.5) * 0.5;
+            }
+            agent.targetAngle = targetAngle;
+            agent.targetTree = null;
+            agent.targetCoconut = null;
+            break;
+        case ACTIONS.MOVE_SOUTH:
+            agent.state = 'walking';
+            targetAngle = Math.PI + (seededRandom() - 0.5) * 0.6;
+            checkX = agent.mesh.position.x + Math.sin(targetAngle) * 5;
+            checkZ = agent.mesh.position.z + Math.cos(targetAngle) * 5;
+            if (getTerrainHeight(checkX, checkZ) < CONFIG.waterLevel + 2) {
+                targetAngle = Math.atan2(-agent.mesh.position.x, -agent.mesh.position.z) + (seededRandom() - 0.5) * 0.5;
+            }
+            agent.targetAngle = targetAngle;
+            agent.targetTree = null;
+            agent.targetCoconut = null;
+            break;
+        case ACTIONS.MOVE_EAST:
+            agent.state = 'walking';
+            targetAngle = Math.PI / 2 + (seededRandom() - 0.5) * 0.6;
+            checkX = agent.mesh.position.x + Math.sin(targetAngle) * 5;
+            checkZ = agent.mesh.position.z + Math.cos(targetAngle) * 5;
+            if (getTerrainHeight(checkX, checkZ) < CONFIG.waterLevel + 2) {
+                targetAngle = Math.atan2(-agent.mesh.position.x, -agent.mesh.position.z) + (seededRandom() - 0.5) * 0.5;
+            }
+            agent.targetAngle = targetAngle;
+            agent.targetTree = null;
+            agent.targetCoconut = null;
+            break;
+        case ACTIONS.MOVE_WEST:
+            agent.state = 'walking';
+            targetAngle = -Math.PI / 2 + (seededRandom() - 0.5) * 0.6;
+            checkX = agent.mesh.position.x + Math.sin(targetAngle) * 5;
+            checkZ = agent.mesh.position.z + Math.cos(targetAngle) * 5;
+            if (getTerrainHeight(checkX, checkZ) < CONFIG.waterLevel + 2) {
+                targetAngle = Math.atan2(-agent.mesh.position.x, -agent.mesh.position.z) + (seededRandom() - 0.5) * 0.5;
+            }
+            agent.targetAngle = targetAngle;
+            agent.targetTree = null;
+            agent.targetCoconut = null;
+            break;
+        case ACTIONS.GATHER:
+            // Find nearest GROUND coconut and go pick it up
+            const nearestCoconut = findNearestGroundCoconut(agent);
+            if (nearestCoconut && canCarryMore(agent)) {
+                agent.targetCoconut = nearestCoconut;
+                const dx = nearestCoconut.mesh.position.x - agent.mesh.position.x;
+                const dz = nearestCoconut.mesh.position.z - agent.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 2) {
+                    agent.state = 'pickingUp';
+                    agent.gatherTime = 0.3;
+                } else {
+                    agent.state = 'walking';
+                    agent.targetAngle = Math.atan2(dx, dz);
+                }
+            }
+            break;
+        case ACTIONS.EAT:
+            if (agent.inventory.coconuts > 0) {
+                agent.state = 'eating';
+            }
+            break;
+        case ACTIONS.REST:
+            agent.state = 'resting';
+            agent.restTime = 2;
+            break;
+        case ACTIONS.PICKUP:
+            const gc = findNearestGroundCoconut(agent, 3);
+            if (gc && canCarryMore(agent)) {
+                agent.targetCoconut = gc;
+                agent.state = 'pickingUp';
+                agent.gatherTime = 0.4;
+                logTest(`🤲 ${agent.id} started picking up a ground coconut (ML action)`, 'info');
+            }
+            break;
+        case ACTIONS.GIVE:
+            const giveTarget = findNearbyAgent(agent, 2);
+            if (giveTarget && agent.inventory.coconuts > 0 && canCarryMore(giveTarget)) {
+                agent.inventory.coconuts--;
+                giveTarget.inventory.coconuts++;
+                agent.lastReward = 0.2;
+            }
+            break;
+        case ACTIONS.STEAL:
+            const stealTarget = findNearbyAgent(agent, 2);
+            if (stealTarget && stealTarget.inventory.coconuts > 0) {
+                stealTarget.inventory.coconuts--;
+                agent.inventory.coconuts++;
+                agent.lastReward = -0.1;
+            }
+            break;
+    }
+    
+    agent.lastAction = ACTION_NAMES[action];
+    return true;
+}
+
+// Get valid actions for agent (action masking)
+function getValidActions(agentId) {
+    const obs = getAgentObservation(tribeMembers.find(a => a.id === agentId));
+    if (!obs.alive) return [ACTIONS.NO_OP];
+    
+    const valid = [ACTIONS.NO_OP, ACTIONS.MOVE_NORTH, ACTIONS.MOVE_SOUTH, ACTIONS.MOVE_EAST, ACTIONS.MOVE_WEST];
+    
+    if (obs.canGather) valid.push(ACTIONS.GATHER);
+    if (obs.canEat) valid.push(ACTIONS.EAT);
+    if (obs.energy < 0.5) valid.push(ACTIONS.REST);
+    if (obs.canPickup) valid.push(ACTIONS.PICKUP);
+    if (obs.canGive) valid.push(ACTIONS.GIVE);
+    if (obs.canSteal) valid.push(ACTIONS.STEAL);
+    
+    return valid;
+}
+
+// ML Stats tracking
+let mlStats = {
+    totalSteps: 0,
+    totalRewards: 0,
+    episodesCompleted: 0,
+    avgReward: 0,
+    actionCounts: Object.fromEntries(ACTION_NAMES.map(a => [a, 0])),
+    lastEpisodeReward: 0
+};
+
+// Update ML stats
+function updateMLStats() {
+    tribeMembers.forEach(a => {
+        if (a.alive) {
+            const reward = calculateReward(a);
+            a.cumulativeReward += reward;
+            mlStats.totalRewards += reward;
+            if (a.lastAction) {
+                mlStats.actionCounts[a.lastAction]++;
+            }
+        }
+        a.lastReward = 0; // Reset for next step
+    });
+    mlStats.totalSteps++;
+}
+
+// Comprehensive API
+window.IslandSimulationAPI = {
+    // Original functionality
+    getState: () => tribeMembers.map(a => getAgentObservation(a)),
+    getEnvironmentState: () => ({
+        trees: allTrees.filter(t => t.mesh.userData.treeType === 'palm').map(t => ({
+            position: { x: t.mesh.position.x, y: t.mesh.position.y, z: t.mesh.position.z },
+            coconuts: t.mesh.userData.coconuts || 0
+        })),
+        groundCoconuts: groundCoconuts.map(gc => ({
+            position: { x: gc.mesh.position.x, y: gc.mesh.position.y, z: gc.mesh.position.z }
+        })),
+        timeOfDay: CONFIG.timeOfDay,
+        simulationSpeed: CONFIG.simulationSpeed,
+        agentsAlive: tribeMembers.filter(a => a.alive).length,
+        totalDeaths: totalDeaths
+    }),
+    setSimulationSpeed: s => { CONFIG.simulationSpeed = Math.max(0.5, Math.min(50, s)); },
+    setTimeOfDay: t => { CONFIG.timeOfDay = Math.max(0, Math.min(1, t)); updateTimeOfDay(); },
+    step: (n = 1) => { 
+        for (let i = 0; i < n; i++) {
+            stepSimulation(CONFIG.fixedTimestep);
+            updateMLStats();
+            episodeState.stepCount++;
+        }
+        return { done: isEpisodeDone(), step: episodeState.stepCount };
+    },
+    reset: restartSimulation,
+    runSanityChecks,
+    
+    // Action Space
+    ACTIONS,
+    ACTION_NAMES,
+    ACTION_COUNT,
+    
+    // Agent Control
+    applyAction,
+    getValidActions,
+    
+    // Observations
+    getAgentObservation,
+    calculateReward,
+    
+    // Episode Management
+    startEpisode: () => {
+        restartSimulation();
+        episodeState.stepCount = 0;
+        episodeState.started = true;
+        episodeState.done = false;
+        episodeState.episodeData = [];
+        tribeMembers.forEach(a => { a.cumulativeReward = 0; });
+        mlStats.lastEpisodeReward = 0;
+        return episodeState.stepCount;
+    },
+    isEpisodeDone: () => {
+        const allDead = tribeMembers.every(a => !a.alive);
+        const maxStepsReached = episodeState.stepCount >= episodeState.maxSteps;
+        return allDead || maxStepsReached;
+    },
+    getEpisodeInfo: () => ({
+        stepCount: episodeState.stepCount,
+        maxSteps: episodeState.maxSteps,
+        done: window.IslandSimulationAPI.isEpisodeDone(),
+        agentsAlive: tribeMembers.filter(a => a.alive).length,
+        rewards: tribeMembers.map(a => ({ id: a.id, reward: a.cumulativeReward, alive: a.alive }))
+    }),
+    setMaxSteps: n => { episodeState.maxSteps = n; },
+    
+    // Policy Interface
+    setMLPolicy: (policyFn) => {
+        episodeState.mlPolicy = policyFn;
+        episodeState.policyType = policyFn ? 'ml-policy' : 'rule-based';
+    },
+    getPolicyType: () => episodeState.policyType,
+    
+    // Training Data Collection
+    enableDataCollection: (enabled = true) => { episodeState.dataCollection = enabled; },
+    getEpisodeData: () => [...episodeState.episodeData],
+    clearEpisodeData: () => { episodeState.episodeData = []; },
+    recordTransition: (agentId, state, action, reward, nextState, done) => {
+        if (episodeState.dataCollection) {
+            episodeState.episodeData.push({ agentId, state, action, reward, nextState, done, step: episodeState.stepCount });
+        }
+    },
+    
+    // Stats
+    getMLStats: () => ({ ...mlStats }),
+    getEpisodeHistory: () => [...episodeState.episodeHistory],
+    
+    // Batch operations for training speed
+    batchStep: (n, applyPolicyFn = null) => {
+        const results = [];
+        for (let i = 0; i < n; i++) {
+            // Apply policy if provided
+            if (applyPolicyFn) {
+                tribeMembers.forEach(a => {
+                    if (a.alive) {
+                        const obs = getAgentObservation(a);
+                        const action = applyPolicyFn(obs);
+                        applyAction(a.id, action);
+                    }
+                });
+            }
+            
+            stepSimulation(CONFIG.fixedTimestep);
+            updateMLStats();
+            episodeState.stepCount++;
+            
+            if (window.IslandSimulationAPI.isEpisodeDone()) {
+                results.push({ step: episodeState.stepCount, done: true });
+                break;
+            }
+        }
+        return { 
+            steps: n, 
+            finalStep: episodeState.stepCount, 
+            done: window.IslandSimulationAPI.isEpisodeDone(),
+            aliveCount: tribeMembers.filter(a => a.alive).length
+        };
+    },
+    
+    // Config access
+    getConfig: () => ({ ...CONFIG }),
+    setConfig: (key, value) => { if (key in CONFIG) CONFIG[key] = value; }
+};
+
+// Helper for episode done check
+function isEpisodeDone() {
+    return tribeMembers.every(a => !a.alive) || episodeState.stepCount >= episodeState.maxSteps;
+}
+
+// ============================================
+// Q-LEARNING ML AGENT
+// ============================================
+const QLearning = {
+    // Q-table: maps state string -> action -> value
+    qTable: {},
+    
+    // Hyperparameters - AGGRESSIVE LEARNING
+    learningRate: 0.7, // Very high = learn fast
+    discountFactor: 0.8, // Focus on immediate rewards
+    epsilon: 0.4, // Good exploration
+    epsilonDecay: 0.9998, // Slow decay
+    epsilonMin: 0.1, // Always explore a bit
+    
+    // Stats
+    totalUpdates: 0,
+    avgReward: 0,
+    episodeRewards: [],
+    
+    // State includes HUNTER PROXIMITY for learning to run away
+    getStateKey(obs) {
+        // Only 3 buckets for hunger: starving/ok/full
+        const hunger = obs.hunger < 0.3 ? 0 : obs.hunger < 0.7 ? 1 : 2;
+        // Near tree or not
+        const nearTree = obs.canGather ? 1 : 0;
+        // Has food
+        const hasFood = obs.inventoryCount > 0 ? 1 : 0;
+        // Near ground coconut
+        const nearCoconut = obs.canPickup ? 1 : 0;
+        
+        // 3*2*2*2 = 24 states - simpler without hunter
+        return `${hunger}_${nearTree}_${hasFood}_${nearCoconut}`;
+    },
+    
+    // Get Q-values for a state
+    getQValues(stateKey) {
+        if (!this.qTable[stateKey]) {
+            // Initialize with BIASED values - encourage survival actions
+            this.qTable[stateKey] = {};
+            for (let a = 0; a < ACTION_COUNT; a++) {
+                this.qTable[stateKey][a] = Math.random() * 0.1;
+            }
+            // Give EAT and GATHER high initial values
+            this.qTable[stateKey][ACTIONS.EAT] = 5.0;
+            this.qTable[stateKey][ACTIONS.GATHER] = 3.0;
+        }
+        return this.qTable[stateKey];
+    },
+    
+    // Choose action using epsilon-greedy
+    chooseAction(obs) {
+        const stateKey = this.getStateKey(obs);
+        const qValues = this.getQValues(stateKey);
+        const validActions = getValidActions(obs.id);
+        
+        // Epsilon-greedy exploration
+        if (Math.random() < this.epsilon) {
+            // Random valid action
+            return validActions[Math.floor(Math.random() * validActions.length)];
+        } else {
+            // Best valid action
+            let bestAction = validActions[0];
+            let bestValue = qValues[bestAction] || 0;
+            for (const action of validActions) {
+                if ((qValues[action] || 0) > bestValue) {
+                    bestValue = qValues[action] || 0;
+                    bestAction = action;
+                }
+            }
+            return bestAction;
+        }
+    },
+    
+    // Update Q-value after taking action
+    update(obs, action, reward, nextObs, done) {
+        const stateKey = this.getStateKey(obs);
+        const nextStateKey = this.getStateKey(nextObs);
+        
+        const qValues = this.getQValues(stateKey);
+        const nextQValues = this.getQValues(nextStateKey);
+        
+        // Find max Q-value for next state
+        let maxNextQ = 0;
+        if (!done) {
+            const validNextActions = getValidActions(nextObs.id);
+            for (const a of validNextActions) {
+                maxNextQ = Math.max(maxNextQ, nextQValues[a] || 0);
+            }
+        }
+        
+        // Q-learning update
+        const currentQ = qValues[action] || 0;
+        const targetQ = reward + this.discountFactor * maxNextQ;
+        qValues[action] = currentQ + this.learningRate * (targetQ - currentQ);
+        
+        this.totalUpdates++;
+        this.avgReward = this.avgReward * 0.99 + reward * 0.01;
+    },
+    
+    // Decay exploration rate
+    decayEpsilon() {
+        this.epsilon = Math.max(this.epsilonMin, this.epsilon * this.epsilonDecay);
+    },
+    
+    // Get stats
+    getStats() {
+        return {
+            qTableSize: Object.keys(this.qTable).length,
+            epsilon: this.epsilon.toFixed(3),
+            totalUpdates: this.totalUpdates,
+            avgReward: this.avgReward.toFixed(4)
+        };
+    },
+    
+    // Local Storage
+    save() {
+        try {
+            const data = {
+                qTable: this.qTable,
+                totalUpdates: this.totalUpdates,
+                epsilon: this.epsilon,
+                avgReward: this.avgReward
+            };
+            localStorage.setItem('island_qtable', JSON.stringify(data));
+            console.log('💾 Q-Table saved!');
+        } catch (e) { console.error('Save failed', e); }
+    },
+    
+    load() {
+        try {
+            const raw = localStorage.getItem('island_qtable');
+            if (raw) {
+                const data = JSON.parse(raw);
+                this.qTable = data.qTable || {};
+                this.totalUpdates = data.totalUpdates || 0;
+                this.epsilon = data.epsilon || 0.5;
+                this.avgReward = data.avgReward || 0;
+                console.log('📂 Q-Table loaded!');
+                logTest(`📂 ML Loaded: ${this.totalUpdates} prior updates`, 'success');
+            }
+        } catch (e) { console.error('Load failed', e); }
+    }
+};
+
+// Store previous observations for learning
+let prevObservations = {};
+
+// ML Policy that uses Q-learning
+function qLearningPolicy(obs) {
+    return QLearning.chooseAction(obs);
+}
+
+// Training step - called after each simulation step
+function trainStep() {
+    tribeMembers.forEach(agent => {
+        if (!agent.alive) return;
+        
+        const obs = getAgentObservation(agent);
+        const prevObs = prevObservations[agent.id];
+        
+        if (prevObs && prevObs.action !== undefined) {
+            // SIMPLE CLEAR REWARDS
+            let reward = 0.1; // Base survival reward
+            
+            // BIG reward for eating (hunger went up)
+            if (obs.hunger > prevObs.obs.hunger + 0.1) reward += 50.0; // Eating is great!
+            
+            // BIG reward for gathering (got coconut)
+            if (obs.inventoryCount > prevObs.obs.inventoryCount) reward += 20.0;
+            
+            // Penalty for being hungry
+            if (obs.hunger < 0.3) reward -= 1.0;
+            
+            // Death penalty - HUGE
+            if (!agent.alive) reward -= 500.0;
+            
+            // Update Q-table
+            QLearning.update(prevObs.obs, prevObs.action, reward, obs, !agent.alive);
+        }
+        
+        // Store current observation for next step
+        let action;
+        
+        // SURVIVAL OVERRIDE - force good actions when critical
+        if (obs.hunger < 0.25 && obs.inventoryCount > 0) {
+            action = ACTIONS.EAT; // MUST eat when starving and have food!
+        } else if (obs.hunger < 0.4 && obs.inventoryCount === 0) {
+            action = ACTIONS.GATHER; // MUST gather when hungry and no food
+        } else if (obs.inWater) {
+             // Force move towards center (0,0) if in water
+             const angleToCenter = Math.atan2(-obs.z, -obs.x); // Assuming obs has x/z, need to check
+             // Map angle to cardinal direction for action... simplified: just move randomly out of water
+             // Actually, let's let Q-learning handle it or add a specific 'ESCAPE' logic if Q fails
+             // For now, trust the HUGE negative reward
+             action = QLearning.chooseAction(obs);
+        } else {
+            action = QLearning.chooseAction(obs);
+        }
+        
+        prevObservations[agent.id] = { obs: {...obs}, action };
+        
+        // Apply the action
+        applyAction(agent.id, action);
+    });
+    
+    // Decay exploration
+    QLearning.decayEpsilon();
+    
+    // Save Q-table to localStorage every 500 updates
+    if (QLearning.totalUpdates % 500 === 0) {
+        QLearning.save();
+    }
+}
+
+// Phase 1: Pure rule-based AI (Q-learning hooks removed for now; external ML can drive via IslandSimulationAPI)
+setTimeout(() => {
+    logTest('🎮 Phase 1: Rule-based AI active (no in-browser Q-learning)', 'success');
+}, 1000);
+
+// ============================================
+// START
+// ============================================
+init();
+    </script>
+</body>
+</html>
