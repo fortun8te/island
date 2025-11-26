@@ -8,7 +8,8 @@
     "build": "npm run update-build && vite build",
     "preview": "vite preview",
     "test": "node --experimental-vm-modules tests/sanity.js",
-    "update-build": "node scripts/update-build.js"
+    "update-build": "node scripts/update-build.js",
+    "postbuild": "echo 'Build complete'"
   },
   "dependencies": {
     "lil-gui": "^0.19.2",

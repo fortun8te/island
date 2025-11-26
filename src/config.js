@@ -4,8 +4,8 @@
 
 export const VERSION = '2.0.0'; // Balance overhaul: spears, fishing, resources
 
-// Build number - increments with each commit (26 = current commit count)
-export const BUILD_NUMBER = 26;
+// Build number - increments with each commit (27 = current commit count)
+export const BUILD_NUMBER = 27;
 
 export const CONFIG = {
     // Agents
@@ -28,7 +28,7 @@ export const CONFIG = {
     waterLevel: 0,
     
     // Simulation
-    simulationSpeed: 1, // 1x to 50x
+    simulationSpeed: 50, // 1x to 50x (default: 50x for testing)
     timeOfDay: 0.23, // 0 = sunrise, 0.5 = midday, 1 = sunset (DEFAULT: 0.23 = morning)
     autoPlayTime: false,
     visualQuality: 'high', // 'high' or 'low'

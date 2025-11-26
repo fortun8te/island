@@ -61,7 +61,8 @@ export function updateStats(data) {
         'stat-agents': `${stats.agentsAlive}`,
         'stat-deaths': `${stats.deaths}`,
         'stat-time': getTimeOfDayName(CONFIG.timeOfDay),
-        'stat-coconuts': `${stats.coconutsAvailable}`
+        'stat-coconuts': `${stats.coconutsAvailable}`,
+        'stat-stash': stats.stashDisplay || '🥥0 🪵0 🪨0 🌿0 🐟0 🗡️0'
     };
     
     for (const [id, value] of Object.entries(elements)) {

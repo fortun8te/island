@@ -2099,12 +2099,23 @@ function animate() {
     const aliveAgents = tribeMembers.filter(m => m.alive).length;
     const coconutsAvailable = allTrees.reduce((sum, t) => sum + (t.mesh.userData.coconuts || 0), 0);
     
+    // Build stash display with tools included
+    const hutCoconuts = hut ? (hut.storage.coconut || 0) : 0;
+    const hutWood = hut ? (hut.storage.wood || 0) : 0;
+    const hutStone = hut ? (hut.storage.stone || 0) : 0;
+    const hutVines = hut ? (hut.storage.vine || 0) : 0;
+    const hutFish = hut ? (hut.storage.fish || 0) : 0;
+    const hutSpears = hut ? (hut.storage.fishing_spear || 0) : 0;
+    
+    const stashDisplay = `🥥${hutCoconuts} 🪵${hutWood} 🪨${hutStone} 🌿${hutVines} 🐟${hutFish} 🗡️${hutSpears}`;
+    
     updateStats({
         fps: currentFPS,
         stepsPerSecond: stepsPerSecond,
         agentsAlive: aliveAgents,
         deaths: totalDeaths,
-        coconutsAvailable
+        coconutsAvailable,
+        stashDisplay
     });
     
     // Render
