@@ -7,7 +7,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import GUI from 'lil-gui';
 
-import { CONFIG, VERSION, seededRandom, resetSeed } from './config.js';
+import { CONFIG, VERSION, BUILD_NUMBER, seededRandom, resetSeed } from './config.js';
 import { getTerrainHeight, getRandomIslandPosition, snapToTerrain } from './utils/terrain.js';
 import { 
     logTest, updateStats, runSanityChecks, checkGrounded, 
@@ -93,11 +93,11 @@ let stepCountThisSecond = 0;
 // ============================================
 async function init() {
     updateLoadingProgress(10);
-    logTest(`Initializing scene... (v${VERSION})`, 'info');
+    logTest(`Initializing scene... (v${VERSION} #${BUILD_NUMBER})`, 'info');
     
-    // Update page title with version
+    // Update page title with version and build number
     if (typeof document !== 'undefined') {
-        document.title = `🏝️ Island Simulation v${VERSION}`;
+        document.title = `🏝️ Island Simulation v${VERSION} (#${BUILD_NUMBER})`;
     }
     
     // Reset random seed for determinism
