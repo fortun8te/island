@@ -4,6 +4,49 @@ A 3D tropical island survival simulation built with Three.js, featuring AI agent
 
 ![Island Simulation](https://img.shields.io/badge/three.js-r160-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-in%20development-yellow)
+
+## 📚 Table of Contents
+
+- [Screenshots](#-screenshots)
+- [Overview](#-overview)
+- [Quick Start](#-quick-start)
+- [Getting Started](#-getting-started)
+- [Controls & Interface](#-controls--interface)
+- [Architecture](#-architecture)
+- [ML-Ready API](#-ml-ready-api)
+- [Environmental Features](#-environmental-features)
+- [Agent Behaviors](#-agent-behaviors)
+- [Development](#-development)
+- [Feature Tiers & TODO](#-feature-implementation-tiers)
+- [Troubleshooting](#-troubleshooting)
+- [FAQ](#-faq)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## 📸 Screenshots
+
+> **Note**: Screenshots will be added once the simulation is running in a production environment.
+
+<!-- Placeholder for screenshots -->
+<table>
+  <tr>
+    <td><img src="screenshots/screenshot-1-overview.png" alt="Island Overview" width="400"/></td>
+    <td><img src="screenshots/screenshot-2-agents.png" alt="Agents in Action" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><i>Procedurally generated tropical island with agents</i></td>
+    <td align="center"><i>AI agents gathering resources and surviving</i></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/screenshot-3-activity.png" alt="Agent Activities" width="400"/></td>
+    <td><img src="screenshots/screenshot-4-extended.png" alt="Extended Simulation" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><i>Complex agent behaviors and interactions</i></td>
+    <td align="center"><i>Long-term simulation showing progression</i></td>
+  </tr>
+</table>
 
 ## 📋 Overview
 
@@ -22,27 +65,47 @@ This is a sophisticated survival simulation where autonomous agents navigate a p
 - **🧠 ML-Ready API**: Deterministic simulation with step-by-step control for training
 - **🎨 Beautiful Graphics**: High-quality 3D visuals with shadows, water effects, and dynamic lighting
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ and npm/yarn
-
-### Installation
+## 🚀 Quick Start
 
 ```bash
-# Clone the repository
-git clone git@github.com:fortun8te/island.git
+# Clone and install
+git clone https://github.com/fortun8te/island.git
 cd island
-
-# Install dependencies
 npm install
 
-# Start development server
+# Run the simulation
 npm run dev
 ```
 
-The simulation will open automatically in your browser at `http://localhost:5173`.
+Visit **http://localhost:5173** to see the island simulation in action!
+
+## 📦 Getting Started
+
+### Prerequisites
+
+- **Node.js 18+** and npm (or yarn/pnpm)
+- Modern web browser with WebGL 2.0 support
+- Recommended: 8GB+ RAM for optimal performance
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/fortun8te/island.git
+   cd island
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Start development server**
+   ```bash
+   npm run dev
+   ```
+
+The simulation will be available at `http://localhost:5173` and should open automatically in your default browser.
 
 ### Building for Production
 
@@ -51,47 +114,67 @@ npm run build
 npm run preview
 ```
 
-## 🎮 Controls
+## 🎮 Controls & Interface
 
-### Camera Controls
+### 🎥 Camera Controls
 
-- **WASD**: Move camera (free mode)
-- **QE**: Move camera up/down
-- **Shift**: Speed boost
-- **Click**: Lock pointer for mouse look (free mode)
-- **GUI Menu**: Switch between orbit and free camera modes
+| Control | Action |
+|---------|--------|
+| **WASD** | Move camera forward/back/left/right (free mode) |
+| **Q / E** | Move camera up / down |
+| **Shift** | Speed boost (2x movement) |
+| **Click** | Lock pointer for mouse look (free mode) |
+| **Mouse** | Rotate view (orbit mode) / Look around (free mode) |
+| **Scroll** | Zoom in/out (orbit mode) |
 
-### Simulation Controls
+### 🎛️ GUI Controls
 
-All controls are accessible via the on-screen GUI panel:
-- **Agents**: Adjust number of tribe members (1-25)
-- **Walk Speed**: Control agent movement speed
-- **Simulation Speed**: Accelerate time (1x-50x)
-- **Time of Day**: Manual control or auto-play
-- **Visual Quality**: Switch between high/low quality modes
+Access all simulation settings via the on-screen panel (top-right):
+
+| Setting | Description | Range |
+|---------|-------------|-------|
+| **Agent Count** | Number of tribe members | 1-25 |
+| **Walk Speed** | Agent movement speed | 0.5-3.0 |
+| **Sim Speed** | Time acceleration | 1x-50x |
+| **Time of Day** | Lighting cycle control | Auto/Manual |
+| **Camera Mode** | Orbit or Free camera | Toggle |
+| **Visual Quality** | Graphics fidelity | High/Low |
+| **Show Debug** | Display performance stats | On/Off |
+
+### ⌨️ Debug Controls
+
+- **Run Sanity Checks**: Validate agent positions and states
+- **Reset Simulation**: Restart with new random seed
+- **Export Data**: Save agent statistics (coming soon)
 
 ## 🏗️ Architecture
 
-### Project Structure
+### 📁 Project Structure
 
 ```
-island-simulation/
-├── src/
-│   ├── main.js              # Main entry point, scene setup, animation loop
-│   ├── config.js            # Global configuration and seeded random
-│   ├── systems/
-│   │   ├── needs.js         # Survival needs (hunger, energy, health, social)
-│   │   ├── skills.js        # Skill progression and XP system
-│   │   ├── resources.js     # Resource definitions, inventory, crafting
-│   │   ├── social.js        # Social interactions between agents
-│   │   └── threats.js       # Environmental dangers (sharks, storms, etc.)
-│   └── utils/
-│       ├── terrain.js       # Terrain height generation and positioning
-│       └── sanityChecks.js  # Debug utilities and validation
-├── index.html               # HTML entry point
-├── package.json             # Dependencies and scripts
-└── vite.config.js          # Vite build configuration
+island/
+├── 📄 src/
+│   ├── main.js              # 🎬 Main entry point, scene setup, animation loop
+│   ├── config.js            # ⚙️ Global configuration and seeded random
+│   ├── 📁 systems/          # 🔧 Core simulation systems
+│   │   ├── needs.js         #    Survival needs (hunger, energy, health, social)
+│   │   ├── skills.js        #    Skill progression and XP system
+│   │   ├── resources.js     #    Resource definitions, inventory, crafting
+│   │   ├── social.js        #    Social interactions between agents
+│   │   └── threats.js       #    Environmental dangers (sharks, storms, etc.)
+│   └── 📁 utils/            # 🛠️ Utility functions
+│       ├── terrain.js       #    Terrain height generation and positioning
+│       └── sanityChecks.js  #    Debug utilities and validation
+├── index.html               # 🌐 HTML entry point (includes embedded ML code)
+├── package.json             # 📦 Dependencies and scripts
+├── vite.config.js          # ⚡ Vite build configuration
+└── README.md               # 📖 This file
 ```
+
+**Key Files:**
+- `src/main.js` (2,000+ lines): Scene rendering, agent logic, game loop
+- `index.html` (4,900+ lines): UI, styles, and embedded Q-learning ML code
+- `src/systems/`: Modular systems for needs, skills, resources, social dynamics
 
 ### Core Systems
 
@@ -469,6 +552,82 @@ The simulation is currently in **rule-based mode** with basic efficiency. The go
 
 All behaviors should be deterministic and predictable for ML training, while appearing natural and emergent.
 
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Issue: Simulation runs slowly or lags**
+- Solution: Reduce agent count (GUI > Agents)
+- Switch to Low quality mode (GUI > Visual Quality)
+- Close other browser tabs
+- Ensure you're using a modern browser with WebGL 2.0
+
+**Issue: Page doesn't load or shows blank screen**
+- Check browser console for errors (F12)
+- Ensure Node.js 18+ is installed
+- Try clearing browser cache
+- Verify dev server is running on port 5173
+
+**Issue: Agents behaving strangely or dying quickly**
+- This is expected! The AI is still in development
+- Adjust simulation speed to observe behaviors
+- Check the TODO list for known behavior issues
+
+**Issue: `npm install` fails**
+- Update Node.js to version 18 or higher
+- Clear npm cache: `npm cache clean --force`
+- Delete `node_modules` and `package-lock.json`, then retry
+
+### Performance Tips
+
+- **Optimal agent count**: 10-15 for smooth performance
+- **Simulation speed**: Keep below 10x for accurate physics
+- **Graphics**: Use High quality only on powerful GPUs
+- **Browser**: Chrome/Edge recommended for best WebGL performance
+
+## ❓ FAQ
+
+**Q: Can I use this for machine learning research?**
+A: Yes! The simulation exposes a deterministic API via `window.IslandSimulationAPI` for training RL agents. See the ML-Ready API section.
+
+**Q: How do I change the island terrain?**
+A: Edit `src/config.js` and modify the `seed` value for different island layouts.
+
+**Q: Can agents build structures beyond the hut?**
+A: Not yet. This is planned for Tier 4 (shelter building system).
+
+**Q: Is multiplayer supported?**
+A: No, this is a single-player simulation focused on AI agent behavior.
+
+**Q: Can I export simulation data?**
+A: The Q-learning data is saved to localStorage. Full CSV export is planned.
+
+## 🤝 Contributing
+
+Contributions are welcome! Here's how to help:
+
+1. **Fork the repository**
+2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
+3. **Make your changes** and test thoroughly
+4. **Commit** (`git commit -m 'Add amazing feature'`)
+5. **Push** (`git push origin feature/amazing-feature`)
+6. **Open a Pull Request**
+
+### Development Priorities
+
+See the **TODO Items** section for current priorities. High-priority areas:
+- Agent AI optimization
+- Animation system overhaul
+- Fishing mechanics
+- Resource carrying visuals
+
+### Code Style
+
+- Use ES6+ JavaScript
+- Follow existing code structure
+- Comment complex logic
+- Test with multiple agent counts (1, 5, 15, 25)
+
 ## 📝 License
 
 MIT License - feel free to use this project for learning, research, or commercial purposes.
@@ -476,11 +635,20 @@ MIT License - feel free to use this project for learning, research, or commercia
 ## 🙏 Acknowledgments
 
 Built with:
-- Three.js community
-- Procedural generation techniques
-- Classic survival game mechanics
+- [Three.js](https://threejs.org/) - 3D graphics library
+- [Vite](https://vitejs.dev/) - Build tool and dev server
+- [lil-gui](https://lil-gui.georgealways.com/) - Lightweight GUI controls
+- Inspired by survival games and agent-based modeling research
+
+## 🔗 Links
+
+- **Repository**: [github.com/fortun8te/island](https://github.com/fortun8te/island)
+- **Issues**: [Report bugs or request features](https://github.com/fortun8te/island/issues)
+- **Discussions**: [Ask questions or share ideas](https://github.com/fortun8te/island/discussions)
 
 ---
 
-**Enjoy exploring the island! 🌴**
+**Enjoy exploring the island! 🏝️**
+
+*Built with ❤️ for AI research, education, and fun*
 
