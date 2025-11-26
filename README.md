@@ -114,6 +114,34 @@ npm run build
 npm run preview
 ```
 
+### 🚀 Deploying to Vercel
+
+The easiest way to deploy your island simulation:
+
+**Option 1: Vercel CLI (Fastest)**
+```bash
+# Install Vercel CLI globally
+npm install -g vercel
+
+# Deploy from your project directory
+vercel
+
+# Follow the prompts, and you're live!
+```
+
+**Option 2: Vercel Dashboard (Recommended for continuous deployment)**
+
+1. Push your code to GitHub (already done!)
+2. Visit [vercel.com](https://vercel.com)
+3. Click "Add New Project"
+4. Import your `fortun8te/island` repository
+5. Vercel auto-detects Vite settings
+6. Click "Deploy"
+
+Your simulation will be live at `https://island-[your-username].vercel.app` in ~30 seconds!
+
+**Auto-deploys**: Every push to your main branch automatically deploys.
+
 ## 🎮 Controls & Interface
 
 ### 🎥 Camera Controls
