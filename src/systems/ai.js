@@ -253,11 +253,24 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
         if (findHelpers.canCraftSpear(hut)) {
             // Check if someone else is already crafting
             const craftersCount = coordinator.countAgentsOnTask(tribeMembers, 'craft_spear');
-            if (craftersCount === 0) {
-                member.state = 'crafting';
-                member.task = { type: 'craft_spear', recipeId: 'fishing_spear', priority: 'medium' };
-                member.actionTimer = 5.0;
-                return;
+            const walkingToCraftCount = coordinator.countAgentsOnTask(tribeMembers, 'walk_to_hut_to_craft');
+            
+            if (craftersCount === 0 && walkingToCraftCount === 0) {
+                // First walk to hut, then craft
+                const distToHut = member.mesh.position.distanceTo(hut.position);
+                if (distToHut > 3) {
+                    // Not at hut yet - walk there first
+                    member.state = 'walking';
+                    member.task = { type: 'walk_to_hut_to_craft', recipeId: 'fishing_spear', priority: 'medium' };
+                    member.targetAngle = findHelpers.angleTo(member.mesh.position, hut.position);
+                    return;
+                } else {
+                    // At hut - can craft immediately
+                    member.state = 'crafting';
+                    member.task = { type: 'craft_spear', recipeId: 'fishing_spear', priority: 'medium' };
+                    member.actionTimer = 5.0;
+                    return;
+                }
             }
         }
     }

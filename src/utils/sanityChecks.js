@@ -62,7 +62,9 @@ export function updateStats(data) {
         'stat-deaths': `${stats.deaths}`,
         'stat-time': getTimeOfDayName(CONFIG.timeOfDay),
         'stat-coconuts': `${stats.coconutsAvailable}`,
-        'stat-stash': stats.stashDisplay || '🥥0 🪵0 🪨0 🌿0 🐟0 🗡️0'
+        'stat-stash': stats.stashDisplay || '🥥0 🪵0 🪨0 🌿0 🐟0 🗡️0',
+        'stat-crafting': stats.craftingStatus || 'None',
+        'stat-tasks': stats.taskStatus || '--'
     };
     
     for (const [id, value] of Object.entries(elements)) {
