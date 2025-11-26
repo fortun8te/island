@@ -12,13 +12,14 @@ export const CONFIG = {
     cameraSensitivity: 0.002,
     cameraMode: 'orbit', // Start with orbit for visual check
     
-    // Island
+    // Island - Resources scale with agent count
     islandRadius: 100,
-    palmTreeCount: 60,
-    jungleTreeCount: 100,
-    rockCount: 25,
-    bushCount: 40,
-    fishCount: 15,
+    // Base counts per agent (will be multiplied by tribeMembers in init)
+    palmTreesPerAgent: 6,
+    jungleTreesPerAgent: 10,
+    rocksPerAgent: 2.5,
+    bushesPerAgent: 4,
+    fishPerAgent: 1.5,
     waterLevel: 0,
     
     // Simulation

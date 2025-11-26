@@ -14,8 +14,8 @@ export const RESOURCES = {
         name: 'Coconut',
         type: 'food',
         nutrition: 0.35,
-        gatherTime: 1.0,
-        energyCost: 0.05,
+        gatherTime: 2.5, // Harder - takes longer
+        energyCost: 0.08, // More energy cost
         spoils: false,
         stackSize: 6,
         sources: ['palm_tree']
@@ -95,8 +95,8 @@ export const RESOURCES = {
         id: 'wood',
         name: 'Wood',
         type: 'material',
-        gatherTime: 2.0,
-        energyCost: 0.1,
+        gatherTime: 4.0, // Harder - takes longer
+        energyCost: 0.15, // More energy
         stackSize: 10,
         sources: ['ground_stick', 'palm_chop', 'jungle_tree']
     },
@@ -104,8 +104,8 @@ export const RESOURCES = {
         id: 'stone',
         name: 'Stone',
         type: 'material',
-        gatherTime: 2.5,
-        energyCost: 0.12,
+        gatherTime: 5.0, // Harder - takes longer
+        energyCost: 0.18, // More energy
         stackSize: 8,
         sources: ['rock']
     },
@@ -113,8 +113,8 @@ export const RESOURCES = {
         id: 'vine',
         name: 'Vine',
         type: 'material',
-        gatherTime: 1.5,
-        energyCost: 0.06,
+        gatherTime: 3.0, // Harder - takes longer
+        energyCost: 0.10, // More energy
         stackSize: 8,
         sources: ['bush', 'jungle_tree']
     },
@@ -195,9 +195,10 @@ export const TOOLS = {
         id: 'fishing_spear',
         name: 'Fishing Spear',
         type: 'tool',
-        recipe: { wood: 2, stone: 1 },
-        craftTime: 5.0,
-        durability: 15,
+        recipe: { wood: 5, vine: 5 },
+        craftTime: 8.0,
+        durability: 1, // ONE USE ONLY
+        maxPerAgent: 2, // Can only hold 2 spears max
         effects: {
             fishingSpeedBonus: 0.5,
             canCatchTier2: true,
@@ -390,34 +391,60 @@ export function hasInventoryRoom(inventory, resourceId = null) {
 
 /**
  * Add tool to inventory
+ * Checks maxPerAgent limit (e.g., max 2 spears)
  */
 export function addTool(inventory, toolId, durability = null) {
     const tool = TOOLS[toolId.toUpperCase()] || TOOLS[toolId];
     if (!tool) return false;
     
-    inventory.tools.set(toolId, {
-        durability: durability ?? tool.durability,
-        maxDurability: tool.durability
-    });
+    // Check max per agent limit
+    if (tool.maxPerAgent) {
+        const currentCount = inventory.tools.has(toolId) ? 1 : 0;
+        if (currentCount >= tool.maxPerAgent) {
+            return false; // Already at max
+        }
+    }
+    
+    // For tools with maxPerAgent > 1, we need to track multiple instances
+    // For now, if already has one, add as count
+    if (inventory.tools.has(toolId) && tool.maxPerAgent && tool.maxPerAgent > 1) {
+        const existing = inventory.tools.get(toolId);
+        existing.count = (existing.count || 1) + 1;
+        inventory.tools.set(toolId, existing);
+    } else {
+        inventory.tools.set(toolId, {
+            durability: durability ?? tool.durability,
+            maxDurability: tool.durability,
+            count: 1
+        });
+    }
     return true;
 }
 
 /**
- * Use tool (reduce durability)
+ * Use tool (reduce durability or consume one-use tool)
  * @returns {boolean} tool still usable
  */
 export function useTool(inventory, toolId) {
-    const tool = inventory.tools.get(toolId);
-    if (!tool) return false;
+    const toolData = inventory.tools.get(toolId);
+    if (!toolData) return false;
     
-    tool.durability--;
+    // For tools with count (multiple instances)
+    if (toolData.count && toolData.count > 1) {
+        toolData.count--;
+        // If still has more, keep the tool
+        if (toolData.count > 0) return true;
+    }
     
-    if (tool.durability <= 0) {
+    // Single-use or last one
+    toolData.durability = (toolData.durability || 1) - 1;
+    
+    if (toolData.durability <= 0) {
         inventory.tools.delete(toolId);
         if (inventory.equippedTool === toolId) {
             inventory.equippedTool = null;
         }
-        return false; // Tool broke
+        return false; // Tool consumed/broke
     }
     
     return true;

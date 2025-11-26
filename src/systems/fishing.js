@@ -101,41 +101,35 @@ export class FishingSystem {
 
     /**
      * Calculate optimal fishing spot near a fish
-     * Returns a position in shallow water near the target fish
+     * Returns a position ON LAND (shore) to throw spear from
+     * Agent throws spear from shore, fish floats to land after being hit
      */
-    static calculateFishingSpot(agentPosition, fishPosition, waterLevel) {
-        // Get direction from agent to fish
-        const dx = fishPosition.x - agentPosition.x;
-        const dz = fishPosition.z - agentPosition.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        if (dist < 0.1) return fishPosition.clone();
-
-        // Normalize
-        const ndx = dx / dist;
-        const ndz = dz / dist;
-
-        // Calculate spot 2-3 units away from fish (spear reach distance)
-        const reachDistance = 2.5;
-        const spotX = fishPosition.x - ndx * reachDistance;
-        const spotZ = fishPosition.z - ndz * reachDistance;
-
-        // Set Y to be in shallow water (0.8 units below water surface)
-        const spotY = waterLevel - 0.8;
+    static calculateFishingSpot(agentPosition, fishPosition, waterLevel, islandRadius = 100) {
+        // Calculate position on shore closest to fish (stay on land)
+        const fishDist = Math.sqrt(fishPosition.x ** 2 + fishPosition.z ** 2);
+        const shoreDist = islandRadius * 0.88; // Stay on shore edge, on land
+        
+        // Angle from center to fish
+        const angle = Math.atan2(fishPosition.z, fishPosition.x);
+        const spotX = Math.cos(angle) * shoreDist;
+        const spotZ = Math.sin(angle) * shoreDist;
+        
+        // Position is on shore - use waterLevel + small offset for dry land
+        const spotY = waterLevel + 0.5; // On land, above water
 
         return { x: spotX, y: spotY, z: spotZ };
     }
 
     /**
-     * Check if agent is close enough to fish to attempt catching
+     * Check if agent is close enough to fish to attempt catching (throwing from shore)
      */
     static isInStrikingRange(agentPosition, fishPosition) {
         const dx = agentPosition.x - fishPosition.x;
         const dz = agentPosition.z - fishPosition.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
 
-        // Must be within 3 units horizontally
-        return dist <= 3.5;
+        // Spear throw range: up to 8 units from shore
+        return dist <= 8.0;
     }
 
     /**
@@ -149,23 +143,27 @@ export class FishingSystem {
         const attempts = fishingSystem.fishingAttempts.get(agent.id) || 0;
         fishingSystem.fishingAttempts.set(agent.id, attempts + 1);
 
-        // Base success rate: 30%
-        // Increases with fishing skill (if implemented)
-        // Decreases if agent is low energy
-        let successRate = 0.30;
+        // Base success rate: 25% (can miss!)
+        // Skill significantly improves success rate
+        let successRate = 0.25;
 
-        // Bonus from fishing skill (if exists)
+        // MAJOR bonus from fishing skill - experienced fishers are much better
         if (agent.skills && agent.skills.fishing) {
-            successRate += agent.skills.fishing.level * 0.05;
+            const skillLevel = agent.skills.fishing.level || 0;
+            // Skill 0: 25%, Skill 50: 65%, Skill 100: 95%
+            successRate = 0.25 + (skillLevel / 100) * 0.70;
         }
 
         // Penalty from low energy
         if (agent.needs.energy < 0.3) {
-            successRate *= 0.5;
+            successRate *= 0.4; // Big penalty when tired
         }
 
-        // Bonus for persistent attempts (slight increase per attempt)
-        successRate += Math.min(attempts * 0.02, 0.15);
+        // Small bonus for persistent attempts (practice helps)
+        successRate += Math.min(attempts * 0.01, 0.05);
+        
+        // Cap at 95% max (always some chance to miss)
+        successRate = Math.min(successRate, 0.95);
 
         // Roll for success
         const roll = seededRandom();

@@ -263,13 +263,31 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
     }
 
     // ============================================
+    // PRIORITY 4.3: GET SPEAR FROM HUT (if needed for fishing)
+    // ============================================
+    
+    // Get spear from hut if: need to fish but don't have spear
+    if (!findHelpers.hasSpear(member) && 
+        hut && hut.storage.fishing_spear > 0 &&
+        energy > 0.3 && priorities.coconuts > 0.3) {
+        // Check if someone else is getting a spear
+        const gettingSpear = coordinator.countAgentsOnTask(tribeMembers, 'get_spear_from_hut');
+        if (gettingSpear === 0) {
+            member.state = 'walking';
+            member.task = { type: 'get_spear_from_hut', priority: 'high' };
+            member.targetAngle = findHelpers.angleTo(member.mesh.position, hut.position);
+            return;
+        }
+    }
+
+    // ============================================
     // PRIORITY 4.5: FISHING (Alternative Food Source)
     // ============================================
 
     // Go fishing if:
-    // 1. Have a spear equipped
+    // 1. Have a spear equipped (REQUIRED)
     // 2. Tribe needs food (coconuts low)
-    // 3. Good energy for wading into water
+    // 3. Good energy for fishing from shore
     if (findHelpers.hasSpear && findHelpers.hasSpear(member) &&
         energy > 0.4 && hunger > 0.3 &&
         priorities.coconuts > 0.4) {

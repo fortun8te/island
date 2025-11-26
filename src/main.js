@@ -492,7 +492,9 @@ function createPalmTrees() {
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
     const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
     
-    for (let i = 0; i < CONFIG.palmTreeCount; i++) {
+    // Scale resources with agent count
+    const palmTreeCount = Math.floor(CONFIG.palmTreesPerAgent * CONFIG.tribeMembers);
+    for (let i = 0; i < palmTreeCount; i++) {
         const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.5, CONFIG.islandRadius * 0.85, 2);
         const palm = createPalmTree(trunkMaterial, leafMaterial);
         
@@ -510,7 +512,7 @@ function createPalmTrees() {
         addCoconutsToTree(palm);
     }
     
-    logTest(`Created ${CONFIG.palmTreeCount} palm trees`, 'info');
+    logTest(`Created ${palmTreeCount} palm trees (${CONFIG.palmTreesPerAgent} per agent)`, 'info');
 }
 
 function createPalmTree(trunkMaterial, leafMaterial) {
@@ -576,7 +578,8 @@ function createJungleTrees() {
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
     const canopyColors = [0x1a6b1a, 0x228b22, 0x2d7b2d, 0x1e8b1e];
     
-    for (let i = 0; i < CONFIG.jungleTreeCount; i++) {
+    const jungleTreeCount = Math.floor(CONFIG.jungleTreesPerAgent * CONFIG.tribeMembers);
+    for (let i = 0; i < jungleTreeCount; i++) {
         const pos = getRandomIslandPosition(5, CONFIG.islandRadius * 0.7, 3);
         const jungle = createJungleTree(trunkMaterial, canopyColors);
         
@@ -590,7 +593,7 @@ function createJungleTrees() {
         allTrees.push({ mesh: jungle, age: 1 });
     }
     
-    logTest(`Created ${CONFIG.jungleTreeCount} jungle trees`, 'info');
+    logTest(`Created ${jungleTreeCount} jungle trees (${CONFIG.jungleTreesPerAgent} per agent)`, 'info');
 }
 
 function createJungleTree(trunkMaterial, canopyColors) {
@@ -630,7 +633,8 @@ function createJungleTree(trunkMaterial, canopyColors) {
 // ROCKS
 // ============================================
 function createRocks() {
-    for (let i = 0; i < CONFIG.rockCount; i++) {
+    const rockCount = Math.floor(CONFIG.rocksPerAgent * CONFIG.tribeMembers);
+    for (let i = 0; i < rockCount; i++) {
         const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.6, CONFIG.islandRadius * 0.9, 1.5);
         const rock = createRock();
         
@@ -644,7 +648,7 @@ function createRocks() {
         allRocks.push(rock);
     }
     
-    logTest(`Created ${CONFIG.rockCount} rocks`, 'info');
+    logTest(`Created ${rockCount} rocks (${CONFIG.rocksPerAgent} per agent)`, 'info');
 }
 
 function createRock() {
@@ -679,7 +683,8 @@ function createBushes() {
     const bushMaterial = new THREE.MeshStandardMaterial({ color: 0x3d6a3d, roughness: 0.9 });
     const bushGeometry = new THREE.SphereGeometry(0.6, 8, 6);
     
-    for (let i = 0; i < CONFIG.bushCount; i++) {
+    const bushCount = Math.floor(CONFIG.bushesPerAgent * CONFIG.tribeMembers);
+    for (let i = 0; i < bushCount; i++) {
         const pos = getRandomIslandPosition(15, CONFIG.islandRadius * 0.7, 4);
         
         const bush = new THREE.Mesh(bushGeometry, bushMaterial);
@@ -693,7 +698,7 @@ function createBushes() {
         allBushes.push(bush);
     }
     
-    logTest(`Created ${CONFIG.bushCount} bushes`, 'info');
+    logTest(`Created ${bushCount} bushes (${CONFIG.bushesPerAgent} per agent)`, 'info');
 }
 
 // ============================================
@@ -702,7 +707,8 @@ function createBushes() {
 function createFish() {
     const fishColors = [0xff6b35, 0xffd700, 0x4ecdc4, 0xff69b4, 0x87ceeb];
     
-    for (let i = 0; i < CONFIG.fishCount; i++) {
+    const fishCount = Math.floor(CONFIG.fishPerAgent * CONFIG.tribeMembers);
+    for (let i = 0; i < fishCount; i++) {
         const angle = seededRandom() * Math.PI * 2;
         const dist = CONFIG.islandRadius * (1 + seededRandom() * 0.8);
         
@@ -1118,7 +1124,8 @@ function idleBob(member, delta) {
 
 function updateWalking(member, delta) {
     const mesh = member.mesh;
-    const speed = CONFIG.walkSpeed * delta;
+    // Scale speed with simulation speed
+    const speed = CONFIG.walkSpeed * CONFIG.simulationSpeed * delta;
 
     member.walkPhase += delta * CONFIG.walkSpeed * 5;
 
@@ -1169,10 +1176,17 @@ function updateWalking(member, delta) {
         const terrainY = getTerrainHeight(mesh.position.x, mesh.position.z);
         mesh.position.y = terrainY + Math.abs(Math.sin(member.walkPhase)) * 0.04;
 
-        // Soft boundary toward center
+        // CRITICAL: Prevent agents from entering ocean (deadly!)
         const distFromCenter = Math.sqrt(mesh.position.x ** 2 + mesh.position.z ** 2);
-        if (distFromCenter > CONFIG.islandRadius * 0.9) {
+        const minSafeHeight = CONFIG.waterLevel + 0.5; // Must stay above water
+        if (mesh.position.y < minSafeHeight || distFromCenter > CONFIG.islandRadius * 0.88) {
+            // Too close to water or too far out - move back to safety
             member.targetAngle = Math.atan2(-mesh.position.x, -mesh.position.z);
+            // Force position back on land
+            const safeDist = CONFIG.islandRadius * 0.85;
+            mesh.position.x = Math.cos(member.targetAngle) * safeDist;
+            mesh.position.z = Math.sin(member.targetAngle) * safeDist;
+            mesh.position.y = Math.max(getTerrainHeight(mesh.position.x, mesh.position.z), minSafeHeight);
         }
     }
 }
@@ -1204,7 +1218,8 @@ function updateGathering(member, delta) {
         member.actionTimer = effectiveTime;
     }
 
-    member.actionTimer -= delta;
+    // Scale action timer with simulation speed
+    member.actionTimer -= delta * CONFIG.simulationSpeed;
     if (member.actionTimer > 0) return;
 
     // Apply yield
@@ -1252,10 +1267,12 @@ function updateFishing(member, delta) {
         return;
     }
 
-    // Check if should cancel fishing (too dangerous)
-    if (FishingSystem.shouldCancelFishing(member, CONFIG.waterLevel)) {
-        member.state = 'idle';
-        member.task = null;
+    // CRITICAL: Never allow agents to go into ocean - fishing is from SHORE ONLY
+    const agentY = member.mesh.position.y;
+    if (agentY < CONFIG.waterLevel + 0.3) {
+        // Agent is in water - emergency escape!
+        member.state = 'walking';
+        member.task = { type: 'escape_water' };
         fishingSystem.releaseFish(task.target, member.id);
         return;
     }
@@ -1288,19 +1305,35 @@ function updateFishing(member, delta) {
         member.actionTimer = fishingTime;
     }
 
-    member.actionTimer -= delta;
+    member.actionTimer -= delta * CONFIG.simulationSpeed;
     if (member.actionTimer > 0) return;
 
     // Attempt to catch fish
     const success = FishingSystem.attemptCatch(member, task.target, fishingSystem);
 
     if (success) {
-        // Caught fish!
+        // Caught fish! Spear is consumed (one-use only)
+        const spearConsumed = useTool(member.inventory, 'fishing_spear');
+        if (!spearConsumed) {
+            // No spear left (shouldn't happen, but safety check)
+            member.state = 'idle';
+            member.task = null;
+            fishingSystem.releaseFish(task.target, member.id);
+            CarryingSystem.removeSpear(member); // Remove visual
+            return;
+        }
+        
+        // Remove spear visual if no spears left
+        if (!FishingSystem.hasSpear(member.inventory)) {
+            CarryingSystem.removeSpear(member);
+        }
+
+        // Add fish to inventory
         FishingSystem.addFishToInventory(member.inventory);
         FishingSystem.removeFish(task.target, fishList, scene);
         fishingSystem.releaseFish(task.target, member.id);
 
-        // Award XP
+        // Award XP (fishing skill improves success rate)
         awardXP(member.skills, 'fishing', []);
 
         // Consume energy
@@ -1314,9 +1347,9 @@ function updateFishing(member, delta) {
         member.task = { type: 'haul_to_hut' };
         member.actionTimer = 0;
 
-        logTest(`Agent ${member.id} caught a fish!`, 'success');
+        logTest(`Agent ${member.id} caught a fish! (spear consumed)`, 'success');
     } else {
-        // Failed attempt, try again
+        // Missed - try again (spear not consumed on miss)
         member.actionTimer = fishingTime;
     }
 }
@@ -1344,14 +1377,24 @@ function updateCrafting(member, delta) {
     }
 
     consumeCraftingResources(hutAsInventory(), task.recipeId);
-    hut.storage.fishing_spear++;
-
-    // Give one spear to crafter (equipped) to immediately use
-    addTool(member.inventory, 'fishing_spear');
-    equipTool(member.inventory, 'fishing_spear');
-
-    // Visually attach spear
-    CarryingSystem.attachSpear(member);
+    
+    // Check if agent already has max spears (2 max)
+    const toolData = member.inventory.tools.get('fishing_spear');
+    const currentSpearCount = toolData?.count || (toolData ? 1 : 0);
+    const maxSpears = 2;
+    
+    if (currentSpearCount < maxSpears) {
+        // Agent can carry more spears - give them one
+        if (!addTool(member.inventory, 'fishing_spear')) {
+            // Failed to add (shouldn't happen if check passed)
+        } else {
+            equipTool(member.inventory, 'fishing_spear');
+            CarryingSystem.attachSpear(member);
+        }
+    }
+    
+    // Always store in hut (even if agent already has 2)
+    hut.storage.fishing_spear = (hut.storage.fishing_spear || 0) + 1;
 
     awardXP(member.skills, 'craft_tool', []);
 
@@ -1374,11 +1417,25 @@ function resolveTaskTargetPosition(member) {
         return task.target.position;
     }
 
-    // Fishing task - wade to fishing spot near fish
+    // Fishing task - go to shore position to throw spear from land (NEVER enter water)
     if (task.type === 'go_fishing' && task.target) {
         const fishPos = task.target.mesh.position;
         const waterLevel = CONFIG.waterLevel;
-        return FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel);
+        const spot = FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel, CONFIG.islandRadius);
+        // Use terrain height to ensure agent stays on land (SAFETY: always above water)
+        const terrainY = getTerrainHeight(spot.x, spot.z);
+        return new THREE.Vector3(spot.x, Math.max(terrainY, waterLevel + 0.5), spot.z);
+    }
+    
+    // Emergency escape from water - go to nearest safe land
+    if (task.type === 'escape_water') {
+        const currentPos = member.mesh.position;
+        const safeDist = CONFIG.islandRadius * 0.85; // Well on land
+        const angle = Math.atan2(currentPos.z, currentPos.x);
+        const safeX = Math.cos(angle) * safeDist;
+        const safeZ = Math.sin(angle) * safeDist;
+        const safeY = getTerrainHeight(safeX, safeZ);
+        return new THREE.Vector3(safeX, safeY, safeZ);
     }
 
     // Helping another agent
@@ -1486,14 +1543,54 @@ function onDestinationReached(member) {
         return;
     }
 
-    // Help agent - give them food
+    // Help agent - give them food, fish, or spear
     if (task.type === 'help_agent') {
         const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
-        if (targetMember && targetMember.alive && hasFood(member.inventory)) {
-            // Transfer food to the needy agent
-            removeFromInventory(member.inventory, 'coconut', 1);
-            addToInventory(targetMember.inventory, 'coconut', 1);
-            logTest(`Agent ${member.id} helped ${targetMember.id} with food`, 'success');
+        if (targetMember && targetMember.alive) {
+            let helped = false;
+            
+            // Give fish if available
+            if (getInventoryCount(member.inventory, 'fish') > 0 && targetMember.needs.hunger < 0.5) {
+                removeFromInventory(member.inventory, 'fish', 1);
+                addToInventory(targetMember.inventory, 'fish', 1);
+                logTest(`Agent ${member.id} gave fish to ${targetMember.id}`, 'success');
+                helped = true;
+            }
+            // Give coconut/food if available
+            else if (hasFood(member.inventory) && targetMember.needs.hunger < 0.5) {
+                removeFromInventory(member.inventory, 'coconut', 1);
+                addToInventory(targetMember.inventory, 'coconut', 1);
+                logTest(`Agent ${member.id} gave food to ${targetMember.id}`, 'success');
+                helped = true;
+            }
+            // Give spear if target needs it for fishing (and we have extras)
+            else if (task.giveSpear && member.inventory.tools.has('fishing_spear')) {
+                const toolData = member.inventory.tools.get('fishing_spear');
+                const spearCount = toolData?.count || 1;
+                if (spearCount > 1 || !FishingSystem.hasSpear(targetMember.inventory)) {
+                    // Remove one spear from us
+                    if (toolData.count && toolData.count > 1) {
+                        toolData.count--;
+                    } else {
+                        member.inventory.tools.delete('fishing_spear');
+                        if (member.inventory.equippedTool === 'fishing_spear') {
+                            member.inventory.equippedTool = null;
+                            CarryingSystem.removeSpear(member);
+                        }
+                    }
+                    // Give to target
+                    addTool(targetMember.inventory, 'fishing_spear');
+                    equipTool(targetMember.inventory, 'fishing_spear');
+                    CarryingSystem.attachSpear(targetMember);
+                    logTest(`Agent ${member.id} gave spear to ${targetMember.id}`, 'success');
+                    helped = true;
+                }
+            }
+            
+            if (helped) {
+                CarryingSystem.updateCarryVisual(member);
+                CarryingSystem.updateCarryVisual(targetMember);
+            }
         }
         CarryingSystem.clearCarryVisual(member);
         member.state = 'idle';
@@ -1722,7 +1819,7 @@ function updateFish(delta) {
             CONFIG.islandRadius,
             CONFIG.waterLevel,
             createSingleFish,
-            CONFIG.fishCount
+            fishCount
         );
     }
 
