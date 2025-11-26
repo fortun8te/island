@@ -102,17 +102,17 @@ export class AnimationSystem {
      */
 
     /**
-     * Carrying coconuts - arms forward, cradling
+     * Carrying coconuts - arms up to support head-carried load
      */
     static animateCarryingCoconuts(member, delta, count = 1) {
-        // Both arms forward, cradling load
-        member.rightArm.rotation.x = -0.5;
-        member.rightArm.rotation.y = -0.2;
-        member.leftArm.rotation.x = -0.5;
-        member.leftArm.rotation.y = 0.2;
+        // Arms up to balance/support load on head
+        member.rightArm.rotation.x = -1.2;
+        member.rightArm.rotation.y = 0;
+        member.leftArm.rotation.x = -1.2;
+        member.leftArm.rotation.y = 0;
 
-        // Slight forward lean from weight
-        member.torso.rotation.x = 0.15;
+        // Slight upright posture for balance
+        member.torso.rotation.x = 0;
 
         // Walking animation with carrying
         const walkPhase = member.walkPhase || 0;
@@ -122,19 +122,19 @@ export class AnimationSystem {
     }
 
     /**
-     * Carrying wood - bundle on shoulder
+     * Carrying wood - bundle on head
      */
     static animateCarryingWood(member, delta) {
-        // Right arm holds wood on shoulder
-        member.rightArm.rotation.x = -0.8;
-        member.rightArm.rotation.z = 0.5;
+        // Both arms up to balance wood bundle on head
+        member.rightArm.rotation.x = -1.2;
+        member.rightArm.rotation.z = 0;
 
         // Left arm helps balance
-        member.leftArm.rotation.x = -0.3;
-        member.leftArm.rotation.z = -0.2;
+        member.leftArm.rotation.x = -1.2;
+        member.leftArm.rotation.z = 0;
 
-        // Lean to one side from weight
-        member.torso.rotation.z = 0.2;
+        // Upright posture for balance
+        member.torso.rotation.z = 0;
 
         // Stable walking
         const walkPhase = member.walkPhase || 0;
@@ -144,17 +144,17 @@ export class AnimationSystem {
     }
 
     /**
-     * Carrying stone - heavy, two-handed
+     * Carrying stone - heavy load on head
      */
     static animateCarryingStone(member, delta) {
-        // Both arms down, holding heavy load
-        member.rightArm.rotation.x = 0.3;
-        member.rightArm.rotation.z = 0.3;
-        member.leftArm.rotation.x = 0.3;
-        member.leftArm.rotation.z = -0.3;
+        // Both arms up to balance heavy stone on head
+        member.rightArm.rotation.x = -1.3;
+        member.rightArm.rotation.z = 0;
+        member.leftArm.rotation.x = -1.3;
+        member.leftArm.rotation.z = 0;
 
-        // Forward lean from weight
-        member.torso.rotation.x = 0.3;
+        // Upright but careful posture
+        member.torso.rotation.x = 0;
 
         // Slow, careful steps
         const walkPhase = member.walkPhase || 0;

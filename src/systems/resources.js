@@ -21,6 +21,21 @@ export const RESOURCES = {
         sources: ['palm_tree']
     },
     
+    // Food - Generic Fish (simple system)
+    FISH: {
+        id: 'fish',
+        name: 'Fish',
+        type: 'food',
+        nutrition: 0.4,
+        nutritionCooked: 0.6,
+        catchTime: 4.0,
+        energyCost: 0.15,
+        spoilTime: 120, // 2 minutes
+        stackSize: 4,
+        toolRequired: 'fishing_spear',
+        description: 'Fresh caught fish. Needs spear to catch.'
+    },
+
     // Food - Fish (Tiered)
     MULLET: {
         id: 'mullet',

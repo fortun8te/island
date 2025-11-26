@@ -50,6 +50,11 @@ import {
 import {
     CarryingSystem
 } from './systems/carrying.js';
+import {
+    FishingSystem,
+    FISHING_TASKS,
+    FISHING_CONFIG
+} from './systems/fishing.js';
 
 // ============================================
 // GLOBAL STATE
@@ -64,6 +69,7 @@ let allBushes = [];
 let tribeMembers = [];
 let fishList = [];
 let tribeCoordinator; // AI coordination system
+let fishingSystem; // Fishing mechanics system
 
 // Camera state
 let cameraYaw = 0, cameraPitch = 0;
@@ -145,6 +151,9 @@ async function init() {
 
     // Initialize AI coordination system
     tribeCoordinator = new TribeCoordinator();
+
+    // Initialize fishing system
+    fishingSystem = new FishingSystem();
 
     updateLoadingProgress(90);
 
@@ -932,7 +941,9 @@ function updateTribeMembers(delta) {
             canCraftSpear,
             findNearestPalmWithCoconuts,
             findNearestJungleTree,
-            findNearestRock
+            findNearestRock,
+            findNearestFish,
+            hasSpear
         };
 
         // Use improved AI planning
@@ -1071,8 +1082,11 @@ function executeAgentState(member, delta) {
 
         case 'walking':
         case 'hauling':
-        case 'fishing':
             updateWalking(member, delta);
+            break;
+
+        case 'fishing':
+            updateFishing(member, delta);
             break;
 
         case 'gathering':
@@ -1230,6 +1244,83 @@ function updateGathering(member, delta) {
     member.actionTimer = 0;
 }
 
+function updateFishing(member, delta) {
+    const task = member.task;
+    if (!task || task.type !== 'go_fishing' || !task.target) {
+        member.state = 'idle';
+        member.task = null;
+        return;
+    }
+
+    // Check if should cancel fishing (too dangerous)
+    if (FishingSystem.shouldCancelFishing(member, CONFIG.waterLevel)) {
+        member.state = 'idle';
+        member.task = null;
+        fishingSystem.releaseFish(task.target, member.id);
+        return;
+    }
+
+    // Spearfishing animation
+    member.fishingPhase = (member.fishingPhase || 0) + delta * 3;
+    const hasSpear = FishingSystem.hasSpear(member.inventory);
+    AnimationSystem.animateFishing(member, delta, member.fishingPhase, hasSpear);
+
+    // Check if fish moved out of range
+    const fishPos = task.target.mesh.position;
+    const inRange = FishingSystem.isInStrikingRange(member.mesh.position, fishPos);
+
+    if (!inRange) {
+        // Fish escaped, replan
+        member.state = 'idle';
+        member.task = null;
+        fishingSystem.releaseFish(task.target, member.id);
+        return;
+    }
+
+    // Face the fish
+    member.targetAngle = angleTo(member.mesh.position, fishPos);
+    const angleDiff = member.targetAngle - member.mesh.rotation.y;
+    member.mesh.rotation.y += angleDiff * delta * 5;
+
+    // Fishing takes time - attempt every 3-5 seconds
+    const fishingTime = 4.0;
+    if (member.actionTimer <= 0) {
+        member.actionTimer = fishingTime;
+    }
+
+    member.actionTimer -= delta;
+    if (member.actionTimer > 0) return;
+
+    // Attempt to catch fish
+    const success = FishingSystem.attemptCatch(member, task.target, fishingSystem);
+
+    if (success) {
+        // Caught fish!
+        FishingSystem.addFishToInventory(member.inventory);
+        FishingSystem.removeFish(task.target, fishList, scene);
+        fishingSystem.releaseFish(task.target, member.id);
+
+        // Award XP
+        awardXP(member.skills, 'fishing', []);
+
+        // Consume energy
+        member.needs.energy = Math.max(0, member.needs.energy - 0.15);
+
+        // Update carry visual
+        CarryingSystem.updateCarryVisual(member);
+
+        // Return to shore and haul to hut
+        member.state = 'hauling';
+        member.task = { type: 'haul_to_hut' };
+        member.actionTimer = 0;
+
+        logTest(`Agent ${member.id} caught a fish!`, 'success');
+    } else {
+        // Failed attempt, try again
+        member.actionTimer = fishingTime;
+    }
+}
+
 function updateCrafting(member, delta) {
     const task = member.task;
     if (!task || task.type !== 'craft_spear' || !hut) {
@@ -1259,6 +1350,9 @@ function updateCrafting(member, delta) {
     addTool(member.inventory, 'fishing_spear');
     equipTool(member.inventory, 'fishing_spear');
 
+    // Visually attach spear
+    CarryingSystem.attachSpear(member);
+
     awardXP(member.skills, 'craft_tool', []);
 
     member.state = 'idle';
@@ -1278,6 +1372,13 @@ function resolveTaskTargetPosition(member) {
     // Gathering tasks
     if ((task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone') && task.target) {
         return task.target.position;
+    }
+
+    // Fishing task - wade to fishing spot near fish
+    if (task.type === 'go_fishing' && task.target) {
+        const fishPos = task.target.mesh.position;
+        const waterLevel = CONFIG.waterLevel;
+        return FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel);
     }
 
     // Helping another agent
@@ -1341,6 +1442,21 @@ function onDestinationReached(member) {
         member.state = 'gathering';
         member.actionTimer = 0;
         return;
+    }
+
+    if (task.type === 'go_fishing' && task.target) {
+        // Check if fish is still nearby and in striking range
+        if (FishingSystem.isInStrikingRange(member.mesh.position, task.target.mesh.position)) {
+            member.state = 'fishing';
+            member.actionTimer = 0;
+            member.fishingPhase = 0; // For animation
+            return;
+        } else {
+            // Fish moved away, replan
+            member.state = 'idle';
+            member.task = null;
+            return;
+        }
     }
 
     if (task.type === 'go_fishing_spot') {
@@ -1551,8 +1667,18 @@ function findNearestRock(member, coordinator) {
     return nearest;
 }
 
+function findNearestFish(member) {
+    // Use FishingSystem to find fish, checking claims
+    return FishingSystem.findNearestFish(member, fishList, fishingSystem);
+}
+
+function hasSpear(member) {
+    return FishingSystem.hasSpear(member.inventory);
+}
+
 function hasFood(inventory) {
-    return getInventoryCount(inventory, 'coconut') > 0;
+    return getInventoryCount(inventory, 'coconut') > 0 ||
+           getInventoryCount(inventory, 'fish') > 0;
 }
 
 function canCraftSpear(hut) {
@@ -1575,13 +1701,33 @@ function getTotalSpearsInTribeAndHut() {
 // FISH UPDATE
 // ============================================
 function updateFish(delta) {
+    // Update fish fleeing behavior
     fishList.forEach(fish => {
+        // Check for nearby agents and flee
+        FishingSystem.updateFishFleeing(fish, tribeMembers, delta, FISHING_CONFIG.FLEE_DISTANCE);
+
+        // Normal swimming behavior
         fish.angle += delta * fish.speed * 0.3;
         fish.mesh.position.x = Math.cos(fish.angle) * fish.dist;
         fish.mesh.position.z = Math.sin(fish.angle) * fish.dist;
         fish.mesh.position.y = fish.yBase + Math.sin(clock.elapsedTime * 2 + fish.angle) * 0.25;
         fish.mesh.rotation.y = fish.angle + Math.PI / 2;
     });
+
+    // Spawn new fish occasionally to maintain population
+    if (seededRandom() < 0.01 * delta) { // Small chance per frame
+        FishingSystem.spawnFish(
+            scene,
+            fishList,
+            CONFIG.islandRadius,
+            CONFIG.waterLevel,
+            createSingleFish,
+            CONFIG.fishCount
+        );
+    }
+
+    // Clean up fishing system claims
+    fishingSystem.cleanupClaims(tribeMembers);
 }
 
 // ============================================

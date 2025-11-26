@@ -17,7 +17,7 @@ export class CarryingSystem {
         const group = new THREE.Group();
 
         for (let i = 0; i < Math.min(count, 3); i++) {
-            const coconutGeo = new THREE.SphereGeometry(0.18, 8, 8);
+            const coconutGeo = new THREE.SphereGeometry(0.25, 8, 8);
             const coconutMat = new THREE.MeshStandardMaterial({
                 color: 0x4a3520,
                 roughness: 0.9,
@@ -26,17 +26,17 @@ export class CarryingSystem {
             const coconut = new THREE.Mesh(coconutGeo, coconutMat);
             coconut.castShadow = true;
 
-            // Stack coconuts
+            // Stack coconuts on head
             if (count === 1) {
-                coconut.position.set(0, -0.1, 0.2);
+                coconut.position.set(0, 2.4, 0);
             } else if (count === 2) {
-                coconut.position.set(i * 0.2 - 0.1, -0.15, 0.2);
+                coconut.position.set(i * 0.3 - 0.15, 2.4 + i * 0.15, 0);
             } else {
-                // 3 coconuts in triangle formation
+                // 3 coconuts stacked on head
                 const positions = [
-                    { x: 0, y: -0.1, z: 0.2 },
-                    { x: -0.15, y: -0.2, z: 0.25 },
-                    { x: 0.15, y: -0.2, z: 0.25 }
+                    { x: 0, y: 2.4, z: 0 },
+                    { x: -0.15, y: 2.6, z: 0 },
+                    { x: 0.15, y: 2.6, z: 0 }
                 ];
                 coconut.position.copy(positions[i]);
             }
@@ -59,7 +59,7 @@ export class CarryingSystem {
         const stickCount = Math.min(count * 2, 6);
 
         for (let i = 0; i < stickCount; i++) {
-            const stickGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.8, 6);
+            const stickGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.2, 6);
             const stickMat = new THREE.MeshStandardMaterial({
                 color: 0x6b4423,
                 roughness: 0.95
@@ -70,16 +70,13 @@ export class CarryingSystem {
             // Bundle sticks together
             stick.rotation.z = Math.PI / 2;
             stick.rotation.y = (i / stickCount) * 0.4 - 0.2;
-            stick.position.y = (i % 3) * 0.08 - 0.08;
-            stick.position.x = -0.1 + (i % 2) * 0.05;
+            stick.position.y = 2.5 + (i % 3) * 0.1;
+            stick.position.x = -0.1 + (i % 2) * 0.08;
 
             group.add(stick);
         }
 
-        // Position bundle on shoulder
-        group.position.set(0.15, 0.4, -0.1);
-        group.rotation.z = -0.3;
-
+        // Position bundle on head (no additional offset needed, already positioned)
         group.userData.resourceType = 'wood';
         group.userData.count = count;
         return group;
@@ -95,7 +92,7 @@ export class CarryingSystem {
 
         for (let i = 0; i < stoneCount; i++) {
             // Irregular stone shape
-            const stoneGeo = new THREE.DodecahedronGeometry(0.15, 0);
+            const stoneGeo = new THREE.DodecahedronGeometry(0.22, 0);
             const stoneMat = new THREE.MeshStandardMaterial({
                 color: 0x666666,
                 roughness: 0.9,
@@ -112,11 +109,11 @@ export class CarryingSystem {
                 Math.random() * Math.PI
             );
 
-            // Position stones
+            // Position stones on head
             if (stoneCount === 1) {
-                stone.position.set(0, -0.3, 0.15);
+                stone.position.set(0, 2.5, 0);
             } else {
-                stone.position.set((i - 0.5) * 0.25, -0.35 + i * 0.05, 0.15);
+                stone.position.set((i - 0.5) * 0.35, 2.5 + i * 0.1, 0);
             }
 
             stone.scale.set(
@@ -134,6 +131,56 @@ export class CarryingSystem {
     }
 
     /**
+     * Create visual mesh for fish
+     */
+    static createFishMesh(count = 1) {
+        const group = new THREE.Group();
+
+        const fishCount = Math.min(count, 2);
+
+        for (let i = 0; i < fishCount; i++) {
+            const fishGroup = new THREE.Group();
+
+            // Body
+            const bodyGeo = new THREE.ConeGeometry(0.12, 0.5, 6);
+            bodyGeo.rotateZ(-Math.PI / 2);
+            const bodyMat = new THREE.MeshStandardMaterial({
+                color: 0x4ecdc4,
+                roughness: 0.3,
+                metalness: 0.2
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            fishGroup.add(body);
+
+            // Tail
+            const tailGeo = new THREE.ConeGeometry(0.1, 0.15, 4);
+            tailGeo.rotateZ(Math.PI / 2);
+            const tail = new THREE.Mesh(tailGeo, bodyMat);
+            tail.position.x = -0.3;
+            fishGroup.add(tail);
+
+            fishGroup.castShadow = true;
+            fishGroup.scale.setScalar(0.8);
+
+            // Position fish on head
+            if (fishCount === 1) {
+                fishGroup.position.set(0, 2.4, 0);
+                fishGroup.rotation.z = Math.PI / 2;
+            } else {
+                fishGroup.position.set((i - 0.5) * 0.4, 2.4, 0);
+                fishGroup.rotation.z = Math.PI / 2;
+                fishGroup.rotation.y = i * 0.3;
+            }
+
+            group.add(fishGroup);
+        }
+
+        group.userData.resourceType = 'fish';
+        group.userData.count = count;
+        return group;
+    }
+
+    /**
      * Update carry visual based on inventory
      */
     static updateCarryVisual(member) {
@@ -144,7 +191,7 @@ export class CarryingSystem {
             return;
         }
 
-        // Determine what to show (priority: stone > wood > coconut)
+        // Determine what to show (priority: stone > wood > fish > coconut)
         const slots = Array.from(member.inventory.slots.entries());
 
         for (const [resourceId, slot] of slots) {
@@ -154,6 +201,8 @@ export class CarryingSystem {
                 mesh = this.createStoneMesh(slot.count);
             } else if (resourceId === 'wood') {
                 mesh = this.createWoodMesh(slot.count);
+            } else if (resourceId === 'fish') {
+                mesh = this.createFishMesh(slot.count);
             } else if (resourceId === 'coconut') {
                 mesh = this.createCoconutMesh(slot.count);
             }

@@ -263,6 +263,37 @@ export function improvedPlanTask(member, tribeMembers, hut, coordinator, findHel
     }
 
     // ============================================
+    // PRIORITY 4.5: FISHING (Alternative Food Source)
+    // ============================================
+
+    // Go fishing if:
+    // 1. Have a spear equipped
+    // 2. Tribe needs food (coconuts low)
+    // 3. Good energy for wading into water
+    if (findHelpers.hasSpear && findHelpers.hasSpear(member) &&
+        energy > 0.4 && hunger > 0.3 &&
+        priorities.coconuts > 0.4) {
+
+        // Check if too many agents are already fishing
+        const fishersCount = coordinator.countAgentsOnTask(tribeMembers, 'go_fishing');
+        const maxFishers = Math.max(1, Math.floor(tribeMembers.filter(m => m.alive).length * 0.3));
+
+        if (fishersCount < maxFishers) {
+            const nearestFish = findHelpers.findNearestFish(member);
+            if (nearestFish) {
+                member.state = 'walking';
+                member.task = {
+                    type: 'go_fishing',
+                    target: nearestFish,
+                    priority: 'medium'
+                };
+                member.targetAngle = findHelpers.angleTo(member.mesh.position, nearestFish.mesh.position);
+                return;
+            }
+        }
+    }
+
+    // ============================================
     // PRIORITY 5: RESOURCE GATHERING (OPTIMIZED)
     // ============================================
 
