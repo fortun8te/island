@@ -27,5 +27,5 @@ coverage/
 *.tmp
 .cache/
 
-# Screenshots (optional - uncomment if you don't want to commit screenshots)
-# screenshots/
+# Screenshots - add manually if needed
+screenshots/

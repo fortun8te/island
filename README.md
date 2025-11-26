@@ -24,29 +24,17 @@ A 3D tropical island survival simulation built with Three.js, featuring AI agent
 - [Contributing](#-contributing)
 - [License](#-license)
 
-## 📸 Screenshots
+## 📸 Live Demo
 
-> **Note**: Screenshots will be added once the simulation is running in a production environment.
+**🌐 [Try it live: island-amber.vercel.app](https://island-amber.vercel.app/)**
 
-<!-- Placeholder for screenshots -->
-<table>
-  <tr>
-    <td><img src="screenshots/screenshot-1-overview.png" alt="Island Overview" width="400"/></td>
-    <td><img src="screenshots/screenshot-2-agents.png" alt="Agents in Action" width="400"/></td>
-  </tr>
-  <tr>
-    <td align="center"><i>Procedurally generated tropical island with agents</i></td>
-    <td align="center"><i>AI agents gathering resources and surviving</i></td>
-  </tr>
-  <tr>
-    <td><img src="screenshots/screenshot-3-activity.png" alt="Agent Activities" width="400"/></td>
-    <td><img src="screenshots/screenshot-4-extended.png" alt="Extended Simulation" width="400"/></td>
-  </tr>
-  <tr>
-    <td align="center"><i>Complex agent behaviors and interactions</i></td>
-    <td align="center"><i>Long-term simulation showing progression</i></td>
-  </tr>
-</table>
+Experience the simulation in your browser with:
+- Real-time 3D island with dynamic lighting
+- Autonomous agents gathering resources and surviving
+- Interactive camera controls and debug tools
+- Adjustable simulation speed (1x-50x)
+
+> **Screenshots**: Visual gallery coming soon! For now, check out the live demo above.
 
 ## 📋 Overview
 
