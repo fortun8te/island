@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --open",
-    "build": "vite build",
+    "build": "npm run update-build && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-vm-modules tests/sanity.js"
+    "test": "node --experimental-vm-modules tests/sanity.js",
+    "update-build": "node scripts/update-build.js"
   },
   "dependencies": {
     "lil-gui": "^0.19.2",
