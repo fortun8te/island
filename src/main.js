@@ -25,7 +25,8 @@ import {
     canCraft,
     consumeCraftingResources,
     addTool,
-    equipTool
+    equipTool,
+    useTool
 } from './systems/resources.js';
 import { 
     createAgentNeeds,
