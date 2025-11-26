@@ -377,6 +377,7 @@ Useful for studying:
 - ⬜ Life cycle (babies, children, reproduction)
 - ⬜ Weather system
 - ⬜ Combat system
+- ⬜ **Audio system & soundtracks** - Ambient music, sound effects, environmental audio
 
 ## 🔨 Major TODO Items
 
@@ -438,7 +439,17 @@ Useful for studying:
   - Resource sharing mechanics
   - Collaborative gathering
 
-#### 7. **Resource Collection Improvements** 🟢 LOW PRIORITY
+#### 7. **Audio & Soundtracks** 🟡 MEDIUM PRIORITY
+- **Current**: No audio system
+- **Needed**: Complete audio implementation
+  - Ambient soundtracks (tropical/island music)
+  - Dynamic music based on time of day
+  - Sound effects for actions (gathering, walking, water)
+  - Environmental audio (ocean waves, birds, wind)
+  - UI sound effects
+  - Volume controls
+
+#### 8. **Resource Collection Improvements** 🟢 LOW PRIORITY
 - Pick up fallen coconuts from ground
 - Resource combination system (carry mixed types)
 - Visual feedback for all gathering actions
