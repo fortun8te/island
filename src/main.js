@@ -1,2364 +1,689 @@
 // ============================================
-// ISLAND SIMULATION - Main Entry Point
+// NS TRAIN SIMULATION - Amsterdam ↔ Amersfoort
 // ============================================
 
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
-import { Water } from 'three/addons/objects/Water.js';
-import GUI from 'lil-gui';
 
-import { CONFIG, VERSION, BUILD_NUMBER, seededRandom, resetSeed } from './config.js';
-import { getTerrainHeight, getRandomIslandPosition, snapToTerrain } from './utils/terrain.js';
-import { 
-    logTest, updateStats, runSanityChecks, checkGrounded, 
-    checkAgentState, runSpeedTest, clearTestLog 
-} from './utils/sanityChecks.js';
+// ============================================
+// CONFIGURATION
+// ============================================
 
-// Survival systems
-import { 
-    RESOURCES,
-    TOOLS,
-    createInventory,
-    addToInventory,
-    removeFromInventory,
-    getInventoryCount,
-    hasInventoryRoom,
-    canCraft,
-    consumeCraftingResources,
-    addTool,
-    equipTool,
-    useTool
-} from './systems/resources.js';
-import { 
-    createAgentNeeds,
-    updateNeeds,
-    consumeFood as applyFoodToNeeds
-} from './systems/needs.js';
-import {
-    createAgentSkills,
-    getGatheringSpeed,
-    getGatheringYield,
-    awardXP
-} from './systems/skills.js';
-import {
-    TribeCoordinator,
-    improvedPlanTask,
-    improvedIdleBehavior
-} from './systems/ai.js';
-import {
-    AnimationSystem,
-    ANIM_STATES
-} from './systems/animations.js';
-import {
-    CarryingSystem
-} from './systems/carrying.js';
-import {
-    FishingSystem,
-    FISHING_TASKS,
-    FISHING_CONFIG
-} from './systems/fishing.js';
-import { createRandomFish } from './utils/fishModel.js';
+const CONFIG = {
+    // Train types
+    SPRINTER_INTERVAL: 300, // 5 minutes in seconds
+    INTERCITY_INTERVAL: 600, // 10 minutes in seconds
+
+    // Physics
+    SPRINTER_MAX_SPEED: 30, // units per second (represents ~130 km/h)
+    INTERCITY_MAX_SPEED: 45, // units per second (represents ~200 km/h)
+    ACCELERATION: 8, // units per second²
+    DECELERATION: 12, // units per second²
+
+    // Track layout
+    TRACK_LENGTH: 200,
+    TRACK_SPACING: 2, // distance between two tracks
+    SEGMENT_LENGTH: 20, // length of each blocking segment
+
+    // Station positions (0 to 1 along track)
+    STATIONS: [
+        { name: 'Amsterdam Centraal', position: 0.05 },
+        { name: 'Hilversum', position: 0.5 },
+        { name: 'Amersfoort', position: 0.95 }
+    ],
+
+    STATION_STOP_TIME: 30 // seconds
+};
 
 // ============================================
 // GLOBAL STATE
 // ============================================
+
 let scene, camera, renderer, clock;
-let water, sky, sun, ambientLight, hemiLight, fillLight;
-let island;
-let hut; // central storage / shelter
-let allTrees = [];
-let allRocks = [];
-let allBushes = [];
-let tribeMembers = [];
-let fishList = [];
-let tribeCoordinator; // AI coordination system
-let fishingSystem; // Fishing mechanics system
+let tracks = { northbound: null, southbound: null };
+let stations = [];
+let signals = [];
+let trains = [];
+let selectedTrain = null;
+let segments = [];
 
-// Camera state
-let cameraYaw = 0, cameraPitch = 0;
-let isPointerLocked = false;
-let orbitCameraAngle = 0;
-let controls = { forward: false, backward: false, left: false, right: false, up: false, down: false, shift: false };
+// Timetable state
+let simulationTime = 0;
+let nextSprinterSpawn = 0;
+let nextIntercitySpawn = 0;
 
-// Simulation state
-let simulationAccumulator = 0;
-let totalSimSteps = 0;
-let totalDeaths = 0;
-let lastFPSUpdate = 0;
-let frameCount = 0;
-let currentFPS = 60;
-let stepsPerSecond = 0;
-let stepCountThisSecond = 0;
+// Raycaster for clicking
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
 
 // ============================================
-// INITIALIZATION
+// SEGMENT SYSTEM (for blocking logic)
 // ============================================
-async function init() {
-    updateLoadingProgress(10);
-    logTest(`Initializing scene... (v${VERSION} #${BUILD_NUMBER})`, 'info');
-    
-    // Update version display in UI
-    const versionDisplayEl = document.getElementById('version-display');
-    if (versionDisplayEl) {
-        versionDisplayEl.textContent = `v${VERSION} #${BUILD_NUMBER}`;
+
+class TrackSegment {
+    constructor(startPos, endPos, track) {
+        this.startPos = startPos;
+        this.endPos = endPos;
+        this.track = track; // 'northbound' or 'southbound'
+        this.occupiedBy = null;
     }
-    
-    // Update page title with version and build number
-    if (typeof document !== 'undefined') {
-        document.title = `🏝️ Island Simulation v${VERSION} (#${BUILD_NUMBER})`;
+
+    isOccupied() {
+        return this.occupiedBy !== null;
     }
-    
-    // Reset random seed for determinism
-    resetSeed(CONFIG.seed);
-    
-    // Scene
-    scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xf0d8c8, 0.0015); // Warm sunrise fog
-    
-    // Clock
-    clock = new THREE.Clock();
-    
-    // Camera - start with orbit view
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-    camera.position.set(200, 100, 200);
-    
-    updateLoadingProgress(20);
-    
-    // Renderer
-    renderer = new THREE.WebGLRenderer({ 
-        antialias: CONFIG.visualQuality === 'high',
-        powerPreference: 'high-performance'
-    });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.visualQuality === 'high' ? 2 : 1));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.6; // Darker for sunrise
-    renderer.shadowMap.enabled = CONFIG.visualQuality === 'high';
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
-    updateLoadingProgress(30);
-    
-    // Build scene
-    createLighting();
-    updateLoadingProgress(40);
-    
-    createSky();
-    createWater();
-    updateLoadingProgress(50);
-    
-    createIsland();
-    updateLoadingProgress(60);
-    
-    createPalmTrees();
-    createJungleTrees();
-    updateLoadingProgress(70);
-    
-    createRocks();
-    createBushes();
-    updateLoadingProgress(80);
-    
-    createHut();
-    
-    createFish();
-    createTribeMembers();
 
-    // Initialize AI coordination system
-    tribeCoordinator = new TribeCoordinator();
-
-    // Initialize fishing system
-    fishingSystem = new FishingSystem();
-
-    updateLoadingProgress(90);
-
-    // Setup controls and GUI
-    setupControls();
-    setupGUI();
-    
-    // Events
-    window.addEventListener('resize', onResize);
-    
-    updateLoadingProgress(95);
-    
-    // Initial time of day - MORNING
-    CONFIG.timeOfDay = 0.23;
-    updateTimeOfDay();
-    
-    // Run initial sanity checks
-    logTest('Running initial sanity checks...', 'info');
-    setTimeout(() => {
-        runSanityChecks(scene, tribeMembers, allTrees);
-    }, 500);
-    
-    updateLoadingProgress(100);
-    
-    // Hide loading screen
-    setTimeout(() => {
-        document.getElementById('loading').classList.add('hidden');
-        logTest('Simulation started at sunrise', 'success');
-    }, 600);
-    
-    // Start animation loop
-    animate();
-}
-
-function updateLoadingProgress(percent) {
-    const el = document.getElementById('loading-progress');
-    if (el) el.style.width = `${percent}%`;
-}
-
-// ============================================
-// LIGHTING
-// ============================================
-function createLighting() {
-    // Ambient
-    ambientLight = new THREE.AmbientLight(0xffe8d0, 0.3);
-    scene.add(ambientLight);
-    
-    // Hemisphere (sky/ground gradient)
-    hemiLight = new THREE.HemisphereLight(0xffaa77, 0x445522, 0.5);
-    scene.add(hemiLight);
-    
-    // Sun (directional)
-    sun = new THREE.DirectionalLight(0xffaa55, 1.5);
-    sun.position.set(100, 50, 100);
-    sun.castShadow = true;
-    sun.shadow.mapSize.width = CONFIG.visualQuality === 'high' ? 2048 : 1024;
-    sun.shadow.mapSize.height = CONFIG.visualQuality === 'high' ? 2048 : 1024;
-    sun.shadow.camera.near = 10;
-    sun.shadow.camera.far = 400;
-    sun.shadow.camera.left = -150;
-    sun.shadow.camera.right = 150;
-    sun.shadow.camera.top = 150;
-    sun.shadow.camera.bottom = -150;
-    sun.shadow.bias = -0.0002;
-    scene.add(sun);
-    
-    // Fill light
-    fillLight = new THREE.DirectionalLight(0x88aacc, 0.2);
-    fillLight.position.set(-80, 60, -80);
-    scene.add(fillLight);
-}
-
-function updateTimeOfDay() {
-    const t = CONFIG.timeOfDay; // 0 = sunrise, 0.5 = midday, 1 = sunset
-    
-    // Sun orbit
-    const sunAngle = (t - 0.25) * Math.PI * 2;
-    const sunElevation = Math.sin(t * Math.PI) * 0.85 + 0.15;
-    const sunDist = 200;
-    
-    sun.position.set(
-        Math.cos(sunAngle) * sunDist,
-        sunElevation * 180 + 20,
-        Math.sin(sunAngle) * sunDist
-    );
-    
-    // Color & intensity based on time
-    let sunColor, sunIntensity, ambientColor, ambientIntensity, exposure, fogColor;
-    
-    if (t < 0.15 || t > 0.85) {
-        // Sunrise/Sunset - warm orange/pink
-        sunColor = 0xff7733;
-        sunIntensity = 1.2;
-        ambientColor = 0xffccaa;
-        ambientIntensity = 0.35;
-        exposure = 0.55;
-        fogColor = 0xf0c8a8;
-        scene.fog.density = 0.002;
-    } else if (t < 0.3 || t > 0.7) {
-        // Morning/Evening - warm yellow
-        sunColor = 0xffcc66;
-        sunIntensity = 1.8;
-        ambientColor = 0xfff0d0;
-        ambientIntensity = 0.4;
-        exposure = 0.65;
-        fogColor = 0xe8dcc8;
-        scene.fog.density = 0.0015;
-    } else {
-        // Midday - bright white
-        sunColor = 0xffffff;
-        sunIntensity = 2.2;
-        ambientColor = 0xfff8f0;
-        ambientIntensity = 0.5;
-        exposure = 0.8;
-        fogColor = 0xd8e4f0;
-        scene.fog.density = 0.001;
+    occupy(train) {
+        this.occupiedBy = train;
     }
-    
-    sun.color.setHex(sunColor);
-    sun.intensity = sunIntensity;
-    ambientLight.color.setHex(ambientColor);
-    ambientLight.intensity = ambientIntensity;
-    renderer.toneMappingExposure = exposure;
-    scene.fog.color.setHex(fogColor);
-    
-    // Update sky
-    if (sky) {
-        const phi = THREE.MathUtils.degToRad(90 - sunElevation * 70);
-        const theta = sunAngle;
-        const sunPos = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
-        sky.material.uniforms['sunPosition'].value.copy(sunPos);
-        
-        // Adjust sky parameters for time
-        sky.material.uniforms['rayleigh'].value = t < 0.2 || t > 0.8 ? 3 : 1.5;
+
+    release() {
+        this.occupiedBy = null;
     }
-    
-    // Update water sun direction
-    if (water) {
-        water.material.uniforms['sunDirection'].value.copy(sun.position).normalize();
+
+    contains(position) {
+        return position >= this.startPos && position <= this.endPos;
     }
 }
 
-// ============================================
-// SKY
-// ============================================
-function createSky() {
-    sky = new Sky();
-    sky.scale.setScalar(10000);
-    scene.add(sky);
-    
-    const uniforms = sky.material.uniforms;
-    uniforms['turbidity'].value = 10;
-    uniforms['rayleigh'].value = 3; // Higher for sunrise colors
-    uniforms['mieCoefficient'].value = 0.005;
-    uniforms['mieDirectionalG'].value = 0.8;
-}
+function createSegments() {
+    const numSegments = Math.ceil(CONFIG.TRACK_LENGTH / CONFIG.SEGMENT_LENGTH);
 
-// ============================================
-// WATER
-// ============================================
-function createWater() {
-    const waterGeometry = new THREE.PlaneGeometry(8000, 8000);
-    
-    water = new Water(waterGeometry, {
-        textureWidth: 512,
-        textureHeight: 512,
-        waterNormals: new THREE.TextureLoader().load(
-            'https://threejs.org/examples/textures/waternormals.jpg',
-            (texture) => {
-                texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-            }
-        ),
-        sunDirection: new THREE.Vector3(0.5, 0.5, 0.5),
-        sunColor: 0xffcc88,
-        waterColor: 0x007080,
-        distortionScale: 2,
-        fog: true,
-        alpha: 0.9
-    });
-    
-    water.rotation.x = -Math.PI / 2;
-    water.position.y = CONFIG.waterLevel;
-    scene.add(water);
-    
-    // Ocean floor
-    const floorGeometry = new THREE.PlaneGeometry(4000, 4000);
-    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x0a3040, roughness: 1 });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -15;
-    scene.add(floor);
-    
-    // Shallow water ring (reef-like)
-    const shallowGeometry = new THREE.RingGeometry(CONFIG.islandRadius * 0.95, CONFIG.islandRadius * 1.4, 64);
-    const shallowMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x40b0a0, 
-        transparent: true, 
-        opacity: 0.3,
-        roughness: 0.8
-    });
-    const shallow = new THREE.Mesh(shallowGeometry, shallowMaterial);
-    shallow.rotation.x = -Math.PI / 2;
-    shallow.position.y = -0.5;
-    scene.add(shallow);
-}
+    for (let i = 0; i < numSegments; i++) {
+        const startPos = i * CONFIG.SEGMENT_LENGTH;
+        const endPos = Math.min((i + 1) * CONFIG.SEGMENT_LENGTH, CONFIG.TRACK_LENGTH);
 
-// ============================================
-// ISLAND TERRAIN
-// ============================================
-function createIsland() {
-    const resolution = 100;
-    const size = CONFIG.islandRadius * 2.5;
-    const geometry = new THREE.PlaneGeometry(size, size, resolution, resolution);
-    
-    const positions = geometry.attributes.position.array;
-    const colors = [];
-    
-    for (let i = 0; i < positions.length; i += 3) {
-        const x = positions[i];
-        const z = positions[i + 1];
-        const height = getTerrainHeight(x, z);
-        positions[i + 2] = height;
-        
-        // Vertex colors based on height
-        let color;
-        if (height < 1) {
-            // Wet sand
-            color = new THREE.Color(0xc9a875);
-        } else if (height < 2.5) {
-            // Dry beach
-            const v = seededRandom() * 0.04;
-            color = new THREE.Color(0.92 + v, 0.84 + v, 0.62 + v);
-        } else if (height < 4) {
-            // Grass transition
-            const v = seededRandom() * 0.06;
-            color = new THREE.Color(0.45 + v, 0.65 + v, 0.28);
-        } else {
-            // Dense vegetation
-            const v = seededRandom() * 0.08;
-            color = new THREE.Color(0.18 + v, 0.5 + v, 0.12);
-        }
-        
-        colors.push(color.r, color.g, color.b);
-    }
-    
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.computeVertexNormals();
-    
-    const material = new THREE.MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.85,
-        metalness: 0,
-        flatShading: false
-    });
-    
-    island = new THREE.Mesh(geometry, material);
-    island.rotation.x = -Math.PI / 2;
-    island.receiveShadow = true;
-    scene.add(island);
-}
-
-// ============================================
-// HUT / CENTRAL STORAGE
-// ============================================
-function createHut() {
-    const hutGroup = new THREE.Group();
-    const y = getTerrainHeight(0, 0);
-
-    // Floor
-    const floorGeo = new THREE.CylinderGeometry(2.4, 2.6, 0.3, 12);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.position.y = y + 0.15;
-    floor.receiveShadow = true;
-    hutGroup.add(floor);
-
-    // Pillars
-    const pillarGeo = new THREE.CylinderGeometry(0.12, 0.15, 2.2, 8);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x5b3b1a, roughness: 0.9 });
-    const radius = 2.1;
-    for (let i = 0; i < 4; i++) {
-        const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
-        pillar.position.set(
-            Math.cos(angle) * radius,
-            y + 1.25,
-            Math.sin(angle) * radius
-        );
-        pillar.castShadow = true;
-        hutGroup.add(pillar);
-    }
-
-    // Roof
-    const roofGeo = new THREE.ConeGeometry(3, 1.8, 8);
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, roughness: 0.8 });
-    const roof = new THREE.Mesh(roofGeo, roofMat);
-    roof.position.y = y + 2.5;
-    roof.castShadow = true;
-    hutGroup.add(roof);
-
-    // Storage crates
-    const crateGeo = new THREE.BoxGeometry(0.6, 0.5, 0.6);
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0x9b7b4a, roughness: 0.8 });
-    for (let i = 0; i < 3; i++) {
-        const crate = new THREE.Mesh(crateGeo, crateMat);
-        crate.position.set(-1.6 + i * 1.6, y + 0.45, -1.3);
-        crate.rotation.y = 0.3 * (i - 1);
-        crate.castShadow = true;
-        crate.receiveShadow = true;
-        hutGroup.add(crate);
-    }
-
-    hutGroup.position.set(0, 0, 0);
-    hutGroup.userData.isHut = true;
-    hutGroup.userData.radius = 4;
-
-    scene.add(hutGroup);
-
-    hut = {
-        mesh: hutGroup,
-        position: new THREE.Vector3(0, y, 0),
-        // Shared stockpile - all resources start at 0
-        storage: {
-            coconut: 0,
-            wood: 0,
-            stone: 0,
-            vine: 0,
-            fish: 0,
-            fishing_spear: 0  // Tools stored here - starts at 0, increases when crafted
-        }
-    };
-}
-
-// ============================================
-// PALM TREES
-// ============================================
-function createPalmTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
-    const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
-    
-    // Scale resources with agent count
-    const palmTreeCount = Math.floor(CONFIG.palmTreesPerAgent * CONFIG.tribeMembers);
-    for (let i = 0; i < palmTreeCount; i++) {
-        const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.5, CONFIG.islandRadius * 0.85, 2);
-        const palm = createPalmTree(trunkMaterial, leafMaterial);
-        
-        palm.position.set(pos.x, pos.y - 0.5, pos.z); // Sink slightly into ground
-        palm.rotation.y = seededRandom() * Math.PI * 2;
-        palm.userData.isTree = true;
-        palm.userData.treeType = 'palm';
-        palm.userData.id = `palm_${i}`;
-        palm.userData.coconuts = 1 + Math.floor(seededRandom() * 3);
-        
-        scene.add(palm);
-        allTrees.push({ mesh: palm, age: 1 });
-        
-        // Add coconuts
-        addCoconutsToTree(palm);
-    }
-    
-    logTest(`Created ${palmTreeCount} palm trees (${CONFIG.palmTreesPerAgent} per agent)`, 'info');
-}
-
-function createPalmTree(trunkMaterial, leafMaterial) {
-    const tree = new THREE.Group();
-    
-    const trunkHeight = 5 + seededRandom() * 4;
-    const trunkGeometry = new THREE.CylinderGeometry(0.12, 0.22, trunkHeight, 8);
-    const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-    trunk.position.y = trunkHeight / 2;
-    trunk.castShadow = true;
-    tree.add(trunk);
-    
-    // Leaf crown
-    const crownGeometry = new THREE.SphereGeometry(2, 10, 8);
-    const crown = new THREE.Mesh(crownGeometry, leafMaterial);
-    crown.position.y = trunkHeight + 0.5;
-    crown.scale.y = 0.5;
-    crown.castShadow = true;
-    tree.add(crown);
-    
-    // Extra leaf clusters
-    for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2;
-        const leafCluster = new THREE.Mesh(
-            new THREE.SphereGeometry(1, 8, 6),
-            leafMaterial
-        );
-        leafCluster.position.set(
-            Math.cos(angle) * 1.5,
-            trunkHeight + 0.2,
-            Math.sin(angle) * 1.5
-        );
-        leafCluster.scale.y = 0.4;
-        tree.add(leafCluster);
-    }
-    
-    return tree;
-}
-
-function addCoconutsToTree(tree) {
-    const coconutMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
-    const coconutGeometry = new THREE.SphereGeometry(0.2, 8, 8);
-    
-    const count = tree.userData.coconuts || 0;
-    for (let i = 0; i < count; i++) {
-        const coconut = new THREE.Mesh(coconutGeometry, coconutMaterial);
-        const angle = (i / Math.max(count, 1)) * Math.PI * 2;
-        coconut.position.set(
-            Math.cos(angle) * 0.6,
-            4.5 + seededRandom() * 2,
-            Math.sin(angle) * 0.6
-        );
-        coconut.userData.isCoconut = true;
-        coconut.castShadow = true;
-        tree.add(coconut);
-    }
-}
-
-// ============================================
-// JUNGLE TREES
-// ============================================
-function createJungleTrees() {
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
-    const canopyColors = [0x1a6b1a, 0x228b22, 0x2d7b2d, 0x1e8b1e];
-    
-    const jungleTreeCount = Math.floor(CONFIG.jungleTreesPerAgent * CONFIG.tribeMembers);
-    for (let i = 0; i < jungleTreeCount; i++) {
-        const pos = getRandomIslandPosition(5, CONFIG.islandRadius * 0.7, 3);
-        const jungle = createJungleTree(trunkMaterial, canopyColors);
-        
-        jungle.position.set(pos.x, pos.y - 0.6, pos.z);
-        jungle.rotation.y = seededRandom() * Math.PI * 2;
-        jungle.userData.isTree = true;
-        jungle.userData.treeType = 'jungle';
-        jungle.userData.id = `jungle_${i}`;
-        
-        scene.add(jungle);
-        allTrees.push({ mesh: jungle, age: 1 });
-    }
-    
-    logTest(`Created ${jungleTreeCount} jungle trees (${CONFIG.jungleTreesPerAgent} per agent)`, 'info');
-}
-
-function createJungleTree(trunkMaterial, canopyColors) {
-    const tree = new THREE.Group();
-    
-    const trunkHeight = 6 + seededRandom() * 6;
-    const trunkGeometry = new THREE.CylinderGeometry(0.2, 0.35, trunkHeight, 6);
-    const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-    trunk.position.y = trunkHeight / 2;
-    trunk.castShadow = true;
-    tree.add(trunk);
-    
-    // Canopy clusters
-    const clusters = 2 + Math.floor(seededRandom() * 2);
-    for (let i = 0; i < clusters; i++) {
-        const size = 2.5 + seededRandom() * 2;
-        const canopyGeometry = new THREE.SphereGeometry(size, 8, 6);
-        const canopyMaterial = new THREE.MeshStandardMaterial({
-            color: canopyColors[Math.floor(seededRandom() * canopyColors.length)],
-            roughness: 0.8
-        });
-        const canopy = new THREE.Mesh(canopyGeometry, canopyMaterial);
-        canopy.position.set(
-            (seededRandom() - 0.5) * 2,
-            trunkHeight + size * 0.3 + i * 1.5,
-            (seededRandom() - 0.5) * 2
-        );
-        canopy.scale.y = 0.6;
-        canopy.castShadow = true;
-        tree.add(canopy);
-    }
-    
-    return tree;
-}
-
-// ============================================
-// ROCKS
-// ============================================
-function createRocks() {
-    const rockCount = Math.floor(CONFIG.rocksPerAgent * CONFIG.tribeMembers);
-    for (let i = 0; i < rockCount; i++) {
-        const pos = getRandomIslandPosition(CONFIG.islandRadius * 0.6, CONFIG.islandRadius * 0.9, 1.5);
-        const rock = createRock();
-        
-        const scale = 0.4 + seededRandom() * 0.6;
-        rock.position.set(pos.x, pos.y - scale * 0.35, pos.z);
-        rock.scale.setScalar(scale);
-        rock.rotation.y = seededRandom() * Math.PI;
-        rock.userData.isRock = true;
-        
-        scene.add(rock);
-        allRocks.push(rock);
-    }
-    
-    logTest(`Created ${rockCount} rocks (${CONFIG.rocksPerAgent} per agent)`, 'info');
-}
-
-function createRock() {
-    const geometry = new THREE.DodecahedronGeometry(1, 0);
-    const positions = geometry.attributes.position.array;
-    
-    for (let i = 0; i < positions.length; i += 3) {
-        positions[i] += (seededRandom() - 0.5) * 0.3;
-        positions[i + 1] += (seededRandom() - 0.5) * 0.2;
-        positions[i + 2] += (seededRandom() - 0.5) * 0.3;
-    }
-    geometry.computeVertexNormals();
-    
-    const gray = 0.5 + seededRandom() * 0.2;
-    const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(gray, gray * 0.95, gray * 0.9),
-        roughness: 0.85,
-        flatShading: true
-    });
-    
-    const rock = new THREE.Mesh(geometry, material);
-    rock.scale.y = 0.5 + seededRandom() * 0.3;
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    return rock;
-}
-
-// ============================================
-// BUSHES
-// ============================================
-function createBushes() {
-    const bushMaterial = new THREE.MeshStandardMaterial({ color: 0x3d6a3d, roughness: 0.9 });
-    const bushGeometry = new THREE.SphereGeometry(0.6, 8, 6);
-    
-    const bushCount = Math.floor(CONFIG.bushesPerAgent * CONFIG.tribeMembers);
-    for (let i = 0; i < bushCount; i++) {
-        const pos = getRandomIslandPosition(15, CONFIG.islandRadius * 0.7, 4);
-        
-        const bush = new THREE.Mesh(bushGeometry, bushMaterial);
-        bush.position.set(pos.x, pos.y + 0.3, pos.z);
-        bush.scale.setScalar(0.6 + seededRandom() * 0.5);
-        bush.scale.y *= 0.7;
-        bush.castShadow = true;
-        bush.userData.isBush = true;
-        
-        scene.add(bush);
-        allBushes.push(bush);
-    }
-    
-    logTest(`Created ${bushCount} bushes (${CONFIG.bushesPerAgent} per agent)`, 'info');
-}
-
-// ============================================
-// FISH
-// ============================================
-function createFish() {
-    const fishCount = Math.floor(CONFIG.fishPerAgent * CONFIG.tribeMembers);
-    for (let i = 0; i < fishCount; i++) {
-        const angle = seededRandom() * Math.PI * 2;
-        const dist = CONFIG.islandRadius * (0.9 + seededRandom() * 0.7); // Closer to island
-        
-        // Use proper fish model from fishModel.js (returns a THREE.Group)
-        const fishMesh = createRandomFish();
-        fishMesh.position.set(
-            Math.cos(angle) * dist,
-            -0.5 - seededRandom() * 1.5, // Closer to surface: -0.5 to -2 (was -1 to -5)
-            Math.sin(angle) * dist
-        );
-        fishMesh.rotation.y = angle + Math.PI;
-        
-        // Make sure fish is visible
-        fishMesh.visible = true;
-        fishMesh.castShadow = true;
-        fishMesh.receiveShadow = true;
-        
-        scene.add(fishMesh);
-        fishList.push({
-            mesh: fishMesh,
-            angle: angle,
-            dist: dist,
-            speed: 0.2 + seededRandom() * 0.3,
-            yBase: fishMesh.position.y
+        segments.push({
+            northbound: new TrackSegment(startPos, endPos, 'northbound'),
+            southbound: new TrackSegment(startPos, endPos, 'southbound')
         });
     }
-    
-    logTest(`Created ${fishCount} fish (${CONFIG.fishPerAgent} per agent)`, 'info');
 }
 
-// ============================================
-// TRIBE MEMBERS (AGENTS)
-// ============================================
-function createTribeMembers() {
-    // Clear existing
-    tribeMembers.forEach(m => scene.remove(m.mesh));
-    tribeMembers = [];
-    
-    for (let i = 0; i < CONFIG.tribeMembers; i++) {
-        const member = createTribeMember(i);
-        const pos = getRandomIslandPosition(10, CONFIG.islandRadius * 0.6, 3);
-        
-        member.mesh.position.set(pos.x, pos.y, pos.z);
-        member.mesh.rotation.y = seededRandom() * Math.PI * 2;
-        member.targetAngle = member.mesh.rotation.y;
-        
-        scene.add(member.mesh);
-        tribeMembers.push(member);
-    }
-    
-    logTest(`Created ${CONFIG.tribeMembers} agents`, 'info');
-}
-
-function createTribeMember(index) {
-    const group = new THREE.Group();
-    
-    // Skin tones
-    const skinTones = [0xc68642, 0x8d5524, 0xa67c52, 0x7d4e2a, 0xb57d52];
-    const skinColor = skinTones[Math.floor(seededRandom() * skinTones.length)];
-    const skinMaterial = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.6 });
-    
-    // Body
-    const bodyGeometry = new THREE.CapsuleGeometry(0.35, 1, 8, 12);
-    const body = new THREE.Mesh(bodyGeometry, skinMaterial);
-    body.position.y = 1.3;
-    body.castShadow = true;
-    group.add(body);
-    
-    // Head
-    const headGeometry = new THREE.SphereGeometry(0.3, 12, 12);
-    const head = new THREE.Mesh(headGeometry, skinMaterial);
-    head.position.y = 2.2;
-    head.castShadow = true;
-    group.add(head);
-    
-    // Hair
-    const hairMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
-    const hairGeometry = new THREE.SphereGeometry(0.32, 12, 12);
-    const hair = new THREE.Mesh(hairGeometry, hairMaterial);
-    hair.position.y = 2.35;
-    hair.scale.y = 0.5 + seededRandom() * 0.3;
-    group.add(hair);
-    
-    // Grass skirt
-    const skirtMaterial = new THREE.MeshStandardMaterial({ color: 0x355e3b, side: THREE.DoubleSide });
-    for (let i = 0; i < 16; i++) {
-        const strandGeometry = new THREE.PlaneGeometry(0.08, 0.4 + seededRandom() * 0.15);
-        const strand = new THREE.Mesh(strandGeometry, skirtMaterial);
-        const angle = (i / 16) * Math.PI * 2;
-        strand.position.set(Math.cos(angle) * 0.3, 0.7, Math.sin(angle) * 0.3);
-        strand.rotation.y = angle;
-        strand.rotation.x = 0.25;
-        group.add(strand);
-    }
-    
-    // Legs
-    const legGeometry = new THREE.CapsuleGeometry(0.1, 0.5, 4, 8);
-    const leftLeg = new THREE.Mesh(legGeometry, skinMaterial);
-    leftLeg.position.set(-0.15, 0.4, 0);
-    leftLeg.castShadow = true;
-    group.add(leftLeg);
-    
-    const rightLeg = new THREE.Mesh(legGeometry, skinMaterial);
-    rightLeg.position.set(0.15, 0.4, 0);
-    rightLeg.castShadow = true;
-    group.add(rightLeg);
-    
-    // Arms
-    const armGeometry = new THREE.CapsuleGeometry(0.07, 0.4, 4, 8);
-    const leftArm = new THREE.Mesh(armGeometry, skinMaterial);
-    leftArm.position.set(-0.45, 1.45, 0);
-    leftArm.rotation.z = 0.25;
-    leftArm.castShadow = true;
-    group.add(leftArm);
-    
-    const rightArm = new THREE.Mesh(armGeometry, skinMaterial);
-    rightArm.position.set(0.45, 1.45, 0);
-    rightArm.rotation.z = -0.25;
-    rightArm.castShadow = true;
-    group.add(rightArm);
-    
-    // Eyes
-    const eyeGeometry = new THREE.SphereGeometry(0.04, 8, 8);
-    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
-    const pupilGeometry = new THREE.SphereGeometry(0.02, 8, 8);
-    const pupilMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1810 });
-    
-    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-    leftEye.position.set(-0.1, 2.25, 0.25);
-    leftEye.scale.z = 0.5;
-    group.add(leftEye);
-    
-    const leftPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
-    leftPupil.position.set(-0.1, 2.25, 0.28);
-    group.add(leftPupil);
-    
-    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-    rightEye.position.set(0.1, 2.25, 0.25);
-    rightEye.scale.z = 0.5;
-    group.add(rightEye);
-    
-    const rightPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
-    rightPupil.position.set(0.1, 2.25, 0.28);
-    group.add(rightPupil);
-    
-    return {
-        mesh: group,
-        id: `agent_${index}`,
-        // Animation & movement
-        targetAngle: 0,
-        walkPhase: seededRandom() * Math.PI * 2,
-        leftLeg,
-        rightLeg,
-        leftArm,
-        rightArm,
-        carryMesh: null,
-        // Systems
-        needs: createAgentNeeds(18 + seededRandom() * 15),
-        skills: createAgentSkills(),
-        inventory: createInventory(10),
-        // State machine
-        alive: true,
-        state: 'idle',          // idle, walking, gathering, hauling, resting, eating, crafting, fishing
-        task: null,             // { type, target, resourceId, amountPlanned, ... }
-        restTime: 0,
-        actionTimer: 0
-    };
-}
-
-// ============================================
-// AGENT UPDATE LOGIC (REWRITTEN)
-// ============================================
-
-function updateTribeMembers(delta) {
-    tribeMembers.forEach(member => {
-        if (!member.alive) return;
-
-        const mesh = member.mesh;
-
-        // === NEEDS UPDATE ===
-        const ctx = {
-            isMoving: member.state === 'walking' || member.state === 'hauling' || member.state === 'fishing',
-            isResting: member.state === 'resting' || member.state === 'crafting',
-            inShelter: hut ? mesh.position.distanceTo(hut.position) < hut.mesh.userData.radius : false,
-            inWater: mesh.position.y < CONFIG.waterLevel + 0.2,
-            inDeepWater: mesh.position.y < CONFIG.waterLevel - 2,
-            nearbyAgentCount: tribeMembers.filter(
-                other => other !== member && other.alive &&
-                    other.mesh.position.distanceTo(mesh.position) < 10
-            ).length,
-            nearSickAgent: tribeMembers.some(
-                other => other !== member && other.alive &&
-                    other.needs?.isSick &&
-                    other.mesh.position.distanceTo(mesh.position) < 6
-            )
-        };
-
-        const needsResult = updateNeeds(member.needs, delta, ctx);
-        if (!needsResult.alive) {
-            member.alive = false;
-            mesh.visible = false;
-            totalDeaths++;
-            logTest(`Agent ${member.id} died: ${needsResult.deathCause}`, 'warning');
-            return;
-        }
-
-        // Forced rest event
-        if (needsResult.events.some(e => e.type === 'forced_rest')) {
-            member.state = 'resting';
-            member.task = null;
-            member.restTime = 3 + seededRandom() * 3;
-        }
-
-        // === HIGH-LEVEL DECISION (IMPROVED AI) ===
-        // Update tribe coordinator with latest information
-        tribeCoordinator.analyzeTribe(tribeMembers, hut);
-
-        // Create helper object for AI system
-        const aiHelpers = {
-            angleTo,
-            hasFood,
-            canCraftSpear,
-            findNearestPalmWithCoconuts,
-            findNearestJungleTree,
-            findNearestRock,
-            findNearestFish,
-            hasSpear
-        };
-
-        // Use improved AI planning
-        improvedPlanTask(member, tribeMembers, hut, tribeCoordinator, aiHelpers);
-
-        // === EXECUTION ===
-        executeAgentState(member, delta);
-
-        // Sanity check
-        checkAgentState(member);
-    });
-}
-
-function planOrMaintainTask(member) {
-    if (!member.alive) return;
-
-    const hunger = member.needs.hunger;
-    const energy = member.needs.energy;
-
-    // If we're in the middle of an atomic action, don't replan
-    if (member.state === 'gathering' || member.state === 'crafting' || member.state === 'eating' || member.state === 'fishing') {
-        return;
-    }
-
-    // Eat from inventory if very hungry
-    const coconutsInInv = getInventoryCount(member.inventory, 'coconut');
-    if (hunger < 0.3 && coconutsInInv > 0) {
-        member.state = 'eating';
-        member.task = { type: 'eat_from_inventory', resourceId: 'coconut' };
-        return;
-    }
-
-    // Eat from hut if closer than nearest tree and stockpile has food
-    const hutHasCoconuts = hut && hut.storage.coconut > 0;
-    const nearestPalm = findNearestPalmWithCoconuts(member);
-    const distToHut = hut ? member.mesh.position.distanceTo(hut.position) : Infinity;
-    const distToPalm = nearestPalm
-        ? member.mesh.position.distanceTo(nearestPalm.position)
-        : Infinity;
-
-    if (hunger < 0.4 && hutHasCoconuts && distToHut <= distToPalm) {
-        member.state = 'walking';
-        member.task = { type: 'go_hut_for_food' };
-        member.targetAngle = angleTo(member.mesh.position, hut.position);
-        return;
-    }
-
-    // Low energy -> rest at/near hut
-    if (energy < 0.25) {
-        member.state = 'resting';
-        member.task = { type: 'recover_energy' };
-        member.restTime = 4 + seededRandom() * 4;
-        return;
-    }
-
-    // If carrying resources and hut exists -> haul to hut
-    const carryingAnything = member.inventory.slots.size > 0;
-    if (carryingAnything && hut) {
-        member.state = 'hauling';
-        member.task = { type: 'haul_to_hut' };
-        member.targetAngle = angleTo(member.mesh.position, hut.position);
-        CarryingSystem.updateCarryVisual(member);
-        return;
-    }
-
-    // Craft fishing spear if hut has mats and tribe has almost no spears
-    const totalSpears = getTotalSpearsInTribeAndHut();
-    if (hut && totalSpears < Math.max(2, Math.floor(tribeMembers.length / 3))) {
-        if (canCraft(hutAsInventory(), 'fishing_spear')) {
-            // Check if agent is at hut
-            const distToHut = member.mesh.position.distanceTo(hut.position);
-            if (distToHut > 3) {
-                // Not at hut - walk there first
-                member.state = 'walking';
-                member.task = { type: 'walk_to_hut_to_craft', recipeId: 'fishing_spear' };
-                member.targetAngle = angleTo(member.mesh.position, hut.position);
-                return;
-            } else {
-                // At hut - craft immediately
-                member.state = 'crafting';
-                member.task = { type: 'craft_spear', recipeId: 'fishing_spear' };
-                member.actionTimer = 5.0;
-                return;
-            }
+function getSegmentForPosition(position, track) {
+    for (let seg of segments) {
+        if (seg[track].contains(position)) {
+            return seg[track];
         }
     }
-
-    // If food stockpile is low -> prioritize coconuts
-    const desiredCoconutStock = tribeMembers.length * 4;
-    const hutCoconutStock = hut ? hut.storage.coconut : 0;
-    if (hutCoconutStock < desiredCoconutStock) {
-        if (nearestPalm) {
-            member.state = 'walking';
-            member.task = { type: 'gather_coconuts', targetTree: nearestPalm };
-            member.targetAngle = angleTo(member.mesh.position, nearestPalm.position);
-            return;
-        }
-    }
-
-    // Otherwise, gather building materials near hut (wood/stone)
-    const gatherTarget = findNearestWoodOrStone(member);
-    if (gatherTarget) {
-        member.state = 'walking';
-        member.task = gatherTarget;
-        member.targetAngle = angleTo(member.mesh.position, gatherTarget.target.position);
-        return;
-    }
-
-    // Fallback: gentle idle near hut
-    member.state = 'idle';
-    member.task = null;
-}
-
-function executeAgentState(member, delta) {
-    const mesh = member.mesh;
-
-    switch (member.state) {
-        case 'resting':
-            member.restTime -= delta;
-            if (member.restTime <= 0) {
-                member.state = 'idle';
-                member.task = null;
-            }
-            // Use improved resting animation
-            member.walkPhase += delta * 2;
-            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            AnimationSystem.animateResting(member, delta, member.walkPhase);
-            break;
-
-        case 'eating':
-            // Eating animation over time
-            if (!member.actionTimer || member.actionTimer === 0) {
-                member.actionTimer = 2.0; // 2 seconds to eat
-            }
-
-            member.walkPhase += delta * 5;
-            AnimationSystem.animateEating(member, delta, member.walkPhase);
-
-            member.actionTimer -= delta * CONFIG.simulationSpeed;
-            if (member.actionTimer <= 0) {
-                handleEating(member);
-                member.state = 'idle';
-                member.task = null;
-                // Only clear if inventory is empty after eating
-                if (!member.inventory || member.inventory.slots.size === 0) {
-                    CarryingSystem.clearCarryVisual(member);
-                } else {
-                    // Still carrying items - keep visuals
-                    CarryingSystem.updateCarryVisual(member);
-                }
-            }
-            break;
-
-        case 'walking':
-        case 'hauling':
-            // Ensure carrying visuals persist during walking/hauling
-            if (member.inventory && member.inventory.slots.size > 0) {
-                CarryingSystem.updateCarryVisual(member);
-            }
-            updateWalking(member, delta);
-            break;
-
-        case 'fishing':
-            updateFishing(member, delta);
-            break;
-
-        case 'gathering':
-            updateGathering(member, delta, tribeCoordinator);
-            break;
-
-        case 'crafting':
-            updateCrafting(member, delta);
-            break;
-
-        default:
-            // Use improved idle animation (NO random wandering)
-            member.walkPhase += delta * 2;
-            member.terrainY = getTerrainHeight(member.mesh.position.x, member.mesh.position.z);
-            AnimationSystem.animateIdle(member, delta, member.walkPhase);
-    }
-}
-
-function idleBob(member, delta) {
-    const mesh = member.mesh;
-    member.walkPhase += delta * 2;
-    mesh.position.y = getTerrainHeight(mesh.position.x, mesh.position.z) + Math.sin(member.walkPhase) * 0.015;
-
-    member.leftLeg.rotation.x *= 0.9;
-    member.rightLeg.rotation.x *= 0.9;
-    member.leftArm.rotation.x *= 0.9;
-    member.rightArm.rotation.x *= 0.9;
-}
-
-function updateWalking(member, delta) {
-    const mesh = member.mesh;
-    // Scale speed with simulation speed
-    const speed = CONFIG.walkSpeed * CONFIG.simulationSpeed * delta;
-
-    member.walkPhase += delta * CONFIG.walkSpeed * 5;
-
-    // Use improved carrying animations if hauling
-    if (member.state === 'hauling') {
-        // Determine what is being carried
-        const carryingCoconuts = member.inventory.slots.has('coconut');
-        const carryingWood = member.inventory.slots.has('wood');
-        const carryingStone = member.inventory.slots.has('stone');
-
-        if (carryingStone) {
-            AnimationSystem.animateCarryingStone(member, delta);
-        } else if (carryingWood) {
-            AnimationSystem.animateCarryingWood(member, delta);
-        } else if (carryingCoconuts) {
-            const count = getInventoryCount(member.inventory, 'coconut');
-            AnimationSystem.animateCarryingCoconuts(member, delta, count);
-        }
-    } else {
-        // Normal walking animation
-        AnimationSystem.animateWalking(member, delta, CONFIG.walkSpeed);
-    }
-
-    const targetPos = resolveTaskTargetPosition(member);
-    if (!targetPos) {
-        member.state = 'idle';
-        member.task = null;
-        // Only clear visuals if no inventory - might still be carrying
-        if (!member.inventory || member.inventory.slots.size === 0) {
-            CarryingSystem.clearCarryVisual(member);
-        } else {
-            // Still carrying - keep visuals
-            CarryingSystem.updateCarryVisual(member);
-        }
-        return;
-    }
-
-    const dx = targetPos.x - mesh.position.x;
-    const dz = targetPos.z - mesh.position.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-
-    if (dist < 1.5) {
-        // Reached destination
-        onDestinationReached(member);
-    } else {
-        member.targetAngle = Math.atan2(dx, dz);
-
-        const angleDiff = normalizeAngle(member.targetAngle - mesh.rotation.y);
-        mesh.rotation.y += angleDiff * delta * 4;
-
-        mesh.position.x += Math.sin(mesh.rotation.y) * speed;
-        mesh.position.z += Math.cos(mesh.rotation.y) * speed;
-
-        const terrainY = getTerrainHeight(mesh.position.x, mesh.position.z);
-        mesh.position.y = terrainY + Math.abs(Math.sin(member.walkPhase)) * 0.04;
-
-        // CRITICAL: Prevent agents from entering ocean (deadly!)
-        const distFromCenter = Math.sqrt(mesh.position.x ** 2 + mesh.position.z ** 2);
-        const minSafeHeight = CONFIG.waterLevel + 0.5; // Must stay above water
-        if (mesh.position.y < minSafeHeight || distFromCenter > CONFIG.islandRadius * 0.88) {
-            // Too close to water or too far out - move back to safety
-            member.targetAngle = Math.atan2(-mesh.position.x, -mesh.position.z);
-            // Force position back on land
-            const safeDist = CONFIG.islandRadius * 0.85;
-            mesh.position.x = Math.cos(member.targetAngle) * safeDist;
-            mesh.position.z = Math.sin(member.targetAngle) * safeDist;
-            mesh.position.y = Math.max(getTerrainHeight(mesh.position.x, mesh.position.z), minSafeHeight);
-        }
-    }
-}
-
-function updateGathering(member, delta, coordinator = null) {
-    const mesh = member.mesh;
-    const task = member.task;
-    if (!task || !task.target) {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Face the resource we're gathering
-    const targetPos = task.target.position || task.target;
-    member.targetAngle = angleTo(member.mesh.position, targetPos);
-    const angleDiff = normalizeAngle(member.targetAngle - mesh.rotation.y);
-    mesh.rotation.y += angleDiff * delta * 6; // Smoothly face resource
-
-    // STOP MOVING - agent should stand still while gathering
-    // Don't walk into the resource, stop at gathering distance
-    const distToResource = mesh.position.distanceTo(targetPos);
-    if (distToResource > 2.5) {
-        // Still too far, keep walking
-        const speed = CONFIG.walkSpeed * CONFIG.simulationSpeed * delta;
-        member.targetAngle = angleTo(member.mesh.position, targetPos);
-        const angleDiff2 = normalizeAngle(member.targetAngle - mesh.rotation.y);
-        mesh.rotation.y += angleDiff2 * delta * 4;
-        mesh.position.x += Math.sin(mesh.rotation.y) * speed;
-        mesh.position.z += Math.cos(mesh.rotation.y) * speed;
-        const terrainY = getTerrainHeight(mesh.position.x, mesh.position.z);
-        mesh.position.y = terrainY + Math.abs(Math.sin((member.walkPhase || 0) * 5)) * 0.04;
-        return; // Still walking to resource
-    }
-
-    // Now at gathering distance - play animations
-    // Use improved animations based on resource type
-    member.walkPhase = (member.walkPhase || 0) + delta * 10;
-
-    if (task.resourceId === 'coconut' || task.resourceId === 'coconuts') {
-        AnimationSystem.animateCoconutGathering(member, delta, member.walkPhase);
-    } else if (task.resourceId === 'wood') {
-        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
-    } else if (task.resourceId === 'stone') {
-        AnimationSystem.animateStoneGathering(member, delta, member.walkPhase);
-    } else if (task.resourceId === 'vine') {
-        // Use similar animation to wood gathering for vines
-        AnimationSystem.animateWoodGathering(member, delta, member.walkPhase);
-    }
-
-    const baseResource = RESOURCES[task.resourceId?.toUpperCase()] || RESOURCES[task.resourceId];
-    const baseTime = baseResource?.gatherTime || 1.0;
-    const effectiveTime = getGatheringSpeed(member.skills, baseTime);
-
-    if (member.actionTimer <= 0) {
-        member.actionTimer = effectiveTime;
-    }
-
-    // Scale action timer with simulation speed
-    member.actionTimer -= delta * CONFIG.simulationSpeed;
-    if (member.actionTimer > 0) return;
-
-    // Apply yield
-    const baseYield = task.resourceId === 'coconut' ? 3 : 2;
-    const amount = Math.max(1, getGatheringYield(member.skills, baseYield));
-
-    if (!hasInventoryRoom(member.inventory, task.resourceId)) {
-        // Inventory full -> haul
-        member.state = 'hauling';
-        member.task = { type: 'haul_to_hut' };
-        CarryingSystem.updateCarryVisual(member);
-        return;
-    }
-
-    addToInventory(member.inventory, task.resourceId, amount);
-
-    // Visually update world for coconuts
-    if (task.type === 'gather_coconuts' && task.targetTree && task.targetTree.userData.coconuts > 0) {
-        const taken = Math.min(amount, task.targetTree.userData.coconuts);
-        task.targetTree.userData.coconuts -= taken;
-        for (let i = 0; i < taken; i++) {
-            const coconutMesh = task.targetTree.children.find(c => c.userData.isCoconut);
-            if (coconutMesh) {
-                task.targetTree.remove(coconutMesh);
-            }
-        }
-    }
-
-    awardXP(member.skills, task.resourceId === 'coconut' ? 'gather_coconut' :
-        (task.resourceId === 'wood' ? 'gather_wood' : 'gather_stone'), []);
-
-    CarryingSystem.updateCarryVisual(member);
-
-    // Release resource claim after gathering (resource consumed/collected)
-    if (tribeCoordinator && task.target) {
-        tribeCoordinator.releaseResource(task.target, member.id);
-    }
-
-    // After gather, immediately haul to hut
-    member.state = 'hauling';
-    member.task = { type: 'haul_to_hut' };
-    member.actionTimer = 0;
-}
-
-function updateFishing(member, delta) {
-    const task = member.task;
-    if (!task || task.type !== 'go_fishing' || !task.target) {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // CRITICAL: Never allow agents to go into ocean - fishing is from SHORE ONLY
-    const agentY = member.mesh.position.y;
-    if (agentY < CONFIG.waterLevel + 0.3) {
-        // Agent is in water - emergency escape!
-        member.state = 'walking';
-        member.task = { type: 'escape_water' };
-        fishingSystem.releaseFish(task.target, member.id);
-        return;
-    }
-
-    // Spearfishing animation
-    member.fishingPhase = (member.fishingPhase || 0) + delta * 3;
-    const hasSpear = FishingSystem.hasSpear(member.inventory);
-    AnimationSystem.animateFishing(member, delta, member.fishingPhase, hasSpear);
-
-    // Check if fish moved out of range
-    const fishPos = task.target.mesh.position;
-    const inRange = FishingSystem.isInStrikingRange(member.mesh.position, fishPos);
-
-    if (!inRange) {
-        // Fish escaped, replan
-        member.state = 'idle';
-        member.task = null;
-        fishingSystem.releaseFish(task.target, member.id);
-        return;
-    }
-
-    // Face the fish
-    member.targetAngle = angleTo(member.mesh.position, fishPos);
-    const angleDiff = member.targetAngle - member.mesh.rotation.y;
-    member.mesh.rotation.y += angleDiff * delta * 5;
-
-    // Fishing takes time - attempt every 3-5 seconds
-    const fishingTime = 4.0;
-    if (member.actionTimer <= 0) {
-        member.actionTimer = fishingTime;
-    }
-
-    member.actionTimer -= delta * CONFIG.simulationSpeed;
-    if (member.actionTimer > 0) return;
-
-    // Attempt to catch fish
-    const success = FishingSystem.attemptCatch(member, task.target, fishingSystem);
-
-    if (success) {
-        // Caught fish! Spear is consumed (one-use only)
-        const spearConsumed = useTool(member.inventory, 'fishing_spear');
-        if (!spearConsumed) {
-            // No spear left (shouldn't happen, but safety check)
-            member.state = 'idle';
-            member.task = null;
-            fishingSystem.releaseFish(task.target, member.id);
-            CarryingSystem.removeSpear(member); // Remove visual
-            return;
-        }
-        
-        // Remove spear visual if no spears left
-        if (!FishingSystem.hasSpear(member.inventory)) {
-            CarryingSystem.removeSpear(member);
-        }
-
-        // Add fish to inventory
-        FishingSystem.addFishToInventory(member.inventory);
-        FishingSystem.removeFish(task.target, fishList, scene);
-        fishingSystem.releaseFish(task.target, member.id);
-
-        // Award XP (fishing skill improves success rate)
-        awardXP(member.skills, 'fishing', []);
-
-        // Consume energy
-        member.needs.energy = Math.max(0, member.needs.energy - 0.15);
-
-        // Update carry visual
-        CarryingSystem.updateCarryVisual(member);
-
-        // Return to shore and haul to hut
-        member.state = 'hauling';
-        member.task = { type: 'haul_to_hut' };
-        member.actionTimer = 0;
-
-        logTest(`Agent ${member.id} caught a fish! (spear consumed)`, 'success');
-    } else {
-        // Missed - try again (spear not consumed on miss)
-        member.actionTimer = fishingTime;
-    }
-}
-
-function updateCrafting(member, delta) {
-    const task = member.task;
-    if (!task || task.type !== 'craft_spear' || !hut) {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Ensure agent is at hut before crafting
-    const distToHut = member.mesh.position.distanceTo(hut.position);
-    if (distToHut > 3) {
-        // Not at hut - walk there first
-        member.state = 'walking';
-        member.task = { type: 'walk_to_hut_to_craft', recipeId: task.recipeId };
-        member.targetAngle = angleTo(member.mesh.position, hut.position);
-        return;
-    }
-
-    // Scale action timer with simulation speed
-    member.actionTimer -= delta * CONFIG.simulationSpeed;
-
-    // Use improved crafting animation
-    member.walkPhase += delta * 4;
-    AnimationSystem.animateCrafting(member, delta, member.walkPhase);
-
-    if (member.actionTimer > 0) return;
-
-    if (!canCraft(hutAsInventory(), task.recipeId)) {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    consumeCraftingResources(hutAsInventory(), task.recipeId);
-    
-    // Check if agent already has max spears (2 max)
-    const toolData = member.inventory.tools.get('fishing_spear');
-    const currentSpearCount = toolData?.count || (toolData ? 1 : 0);
-    const maxSpears = 2;
-    
-    if (currentSpearCount < maxSpears) {
-        // Agent can carry more spears - give them one
-        if (!addTool(member.inventory, 'fishing_spear')) {
-            // Failed to add (shouldn't happen if check passed)
-        } else {
-            equipTool(member.inventory, 'fishing_spear');
-            CarryingSystem.attachSpear(member);
-        }
-    }
-    
-    // Always store in hut (even if agent already has 2)
-    hut.storage.fishing_spear = (hut.storage.fishing_spear || 0) + 1;
-
-    awardXP(member.skills, 'craft_tool', []);
-
-    member.state = 'idle';
-    member.task = null;
-}
-
-function resolveTaskTargetPosition(member) {
-    const task = member.task;
-    if (!task) return null;
-
-    // Tasks that go to hut
-    if (task.type === 'haul_to_hut' || task.type === 'go_hut_for_food' ||
-        task.type === 'patrol_to_hut' || task.type === 'go_hut_for_helping' ||
-        task.type === 'get_spear_from_hut') {
-        return hut ? hut.position : null;
-    }
-
-    // Gathering tasks
-    if ((task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone') && task.target) {
-        return task.target.position;
-    }
-
-    // Fishing task - go to shore position to throw spear from land (NEVER enter water)
-    if (task.type === 'go_fishing' && task.target) {
-        const fishPos = task.target.mesh.position;
-        const waterLevel = CONFIG.waterLevel;
-        const spot = FishingSystem.calculateFishingSpot(member.mesh.position, fishPos, waterLevel, CONFIG.islandRadius);
-        // Use terrain height to ensure agent stays on land (SAFETY: always above water)
-        const terrainY = getTerrainHeight(spot.x, spot.z);
-        return new THREE.Vector3(spot.x, Math.max(terrainY, waterLevel + 0.5), spot.z);
-    }
-    
-    // Emergency escape from water - go to nearest safe land
-    if (task.type === 'escape_water') {
-        const currentPos = member.mesh.position;
-        const safeDist = CONFIG.islandRadius * 0.85; // Well on land
-        const angle = Math.atan2(currentPos.z, currentPos.x);
-        const safeX = Math.cos(angle) * safeDist;
-        const safeZ = Math.sin(angle) * safeDist;
-        const safeY = getTerrainHeight(safeX, safeZ);
-        return new THREE.Vector3(safeX, safeY, safeZ);
-    }
-
-    // Helping another agent
-    if (task.type === 'help_agent' && task.targetAgent) {
-        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
-        if (targetMember && targetMember.alive) {
-            return targetMember.mesh.position;
-        }
-    }
-
-    // Fishing
-    if (task.type === 'go_fishing_spot') {
-        const angle = Math.atan2(member.mesh.position.x, member.mesh.position.z);
-        const dist = CONFIG.islandRadius * 1.1;
-        return new THREE.Vector3(
-            Math.sin(angle) * dist,
-            CONFIG.waterLevel,
-            Math.cos(angle) * dist
-        );
-    }
-
     return null;
 }
 
-function onDestinationReached(member) {
-    const task = member.task;
-    if (!task) {
-        member.state = 'idle';
-        return;
-    }
+function getNextSegment(currentSegment, direction) {
+    const index = segments.findIndex(s =>
+        s.northbound === currentSegment || s.southbound === currentSegment
+    );
 
-    if (task.type === 'haul_to_hut' && hut) {
-        // Deposit all carried stackable resources
-        member.inventory.slots.forEach((slot, resourceId) => {
-            const amount = slot.count;
-            removeFromInventory(member.inventory, resourceId, amount);
+    if (index === -1) return null;
 
-            if (hut.storage[resourceId] == null) {
-                hut.storage[resourceId] = 0;
-            }
-            hut.storage[resourceId] += amount;
+    const nextIndex = direction === 'forward' ? index + 1 : index - 1;
+    if (nextIndex < 0 || nextIndex >= segments.length) return null;
+
+    return segments[nextIndex][currentSegment.track];
+}
+
+// ============================================
+// SIGNAL SYSTEM
+// ============================================
+
+class Signal {
+    constructor(position, track) {
+        this.position = position;
+        this.track = track;
+        this.state = 'green'; // 'red' or 'green'
+
+        // Create visual representation
+        const geometry = new THREE.BoxGeometry(0.5, 3, 0.5);
+        const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        this.pole = new THREE.Mesh(geometry, poleMaterial);
+
+        const lightGeometry = new THREE.SphereGeometry(0.6, 16, 16);
+        this.lightMaterial = new THREE.MeshStandardMaterial({
+            color: 0x00ff00,
+            emissive: 0x00ff00,
+            emissiveIntensity: 0.5
         });
+        this.light = new THREE.Mesh(lightGeometry, this.lightMaterial);
+        this.light.position.y = 2;
 
-        CarryingSystem.clearCarryVisual(member);
-        member.state = 'idle';
-        member.task = null;
-        return;
+        this.group = new THREE.Group();
+        this.group.add(this.pole);
+        this.group.add(this.light);
+
+        // Position signal
+        const offset = track === 'northbound' ? -CONFIG.TRACK_SPACING/2 - 2 : CONFIG.TRACK_SPACING/2 + 2;
+        this.group.position.set(position - CONFIG.TRACK_LENGTH/2, 0, offset);
     }
 
-    if (task.type === 'go_hut_for_food' && hut && hut.storage.coconut > 0) {
-        // Take up to 2 coconuts to eat and maybe carry one
-        const take = Math.min(2, hut.storage.coconut);
-        hut.storage.coconut -= take;
-        addToInventory(member.inventory, 'coconut', take);
-        CarryingSystem.updateCarryVisual(member); // Show carrying immediately
-        member.state = 'eating';
-        member.task = { type: 'eat_from_inventory', resourceId: 'coconut' };
-        return;
+    setRed() {
+        this.state = 'red';
+        this.lightMaterial.color.setHex(0xff0000);
+        this.lightMaterial.emissive.setHex(0xff0000);
     }
 
-    if (task.type === 'gather_coconuts' || task.type === 'gather_wood' || task.type === 'gather_stone' || task.type === 'gather_vine') {
-        // Check if close enough to start gathering (stop at 2.5 units away)
-        const targetPos = task.target?.position || task.target;
-        const distToResource = member.mesh.position.distanceTo(targetPos);
-        
-        if (distToResource > 2.5) {
-            // Still walking to resource - don't start gathering yet
-            return; // Keep walking
-        }
-        
-        // Close enough - start gathering (resource claim already made, keep it)
-        member.state = 'gathering';
-        member.actionTimer = 0;
-        return;
+    setGreen() {
+        this.state = 'green';
+        this.lightMaterial.color.setHex(0x00ff00);
+        this.lightMaterial.emissive.setHex(0x00ff00);
     }
 
-    if (task.type === 'go_fishing' && task.target) {
-        // Check if fish is still nearby and in striking range
-        if (FishingSystem.isInStrikingRange(member.mesh.position, task.target.mesh.position)) {
-            member.state = 'fishing';
-            member.actionTimer = 0;
-            member.fishingPhase = 0; // For animation
-            return;
+    update(segment) {
+        // Check if next segment is occupied
+        const nextSeg = getNextSegment(segment, 'forward');
+        if (nextSeg && nextSeg.isOccupied()) {
+            this.setRed();
         } else {
-            // Fish moved away, replan - release claim
-            if (tribeCoordinator && task.target) {
-                tribeCoordinator.releaseResource(task.target, member.id);
-            }
-            if (fishingSystem && task.target) {
-                fishingSystem.releaseFish(task.target, member.id);
-            }
-            member.state = 'idle';
-            member.task = null;
-            return;
+            this.setGreen();
         }
-    }
-
-    if (task.type === 'go_fishing_spot') {
-        member.state = 'fishing';
-        member.actionTimer = 3 + seededRandom() * 3;
-        return;
-    }
-
-    // Patrol to hut - just arrive and go idle (ready for new tasks)
-    if (task.type === 'patrol_to_hut') {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Go to hut to get food for helping
-    if (task.type === 'go_hut_for_helping' && hut && hut.storage.coconut > tribeMembers.length) {
-        // Take a coconut to give to someone in need
-        const take = Math.min(2, hut.storage.coconut - tribeMembers.length);
-        if (take > 0) {
-            hut.storage.coconut -= take;
-            addToInventory(member.inventory, 'coconut', take);
-            CarryingSystem.updateCarryVisual(member);
-        }
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    // Walk to hut to craft
-    if (task.type === 'walk_to_hut_to_craft' && hut) {
-        // Now at hut - start crafting
-        if (canCraft(hutAsInventory(), task.recipeId)) {
-            member.state = 'crafting';
-            member.task = { type: 'craft_spear', recipeId: task.recipeId };
-            member.actionTimer = 5.0;
-            return;
-        } else {
-            // Resources gone - abort
-            member.state = 'idle';
-            member.task = null;
-            return;
-        }
-    }
-
-    // Get spear from hut
-    if (task.type === 'get_spear_from_hut' && hut) {
-        if (hut.storage.fishing_spear > 0) {
-            const toolData = member.inventory.tools.get('fishing_spear');
-            const currentCount = toolData?.count || (toolData ? 1 : 0);
-            if (currentCount < 2) {
-                if (addTool(member.inventory, 'fishing_spear')) {
-                    hut.storage.fishing_spear--;
-                    equipTool(member.inventory, 'fishing_spear');
-                    CarryingSystem.attachSpear(member);
-                }
-            }
-        }
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-    
-    // Handle escape_water task completion
-    if (task.type === 'escape_water') {
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-    
-    // Help agent - give them food, fish, or spear
-    if (task.type === 'help_agent') {
-        const targetMember = tribeMembers.find(m => m.id === task.targetAgent);
-        if (targetMember && targetMember.alive) {
-            let helped = false;
-            
-            // Give fish if available
-            if (getInventoryCount(member.inventory, 'fish') > 0 && targetMember.needs.hunger < 0.5) {
-                removeFromInventory(member.inventory, 'fish', 1);
-                addToInventory(targetMember.inventory, 'fish', 1);
-                logTest(`Agent ${member.id} gave fish to ${targetMember.id}`, 'success');
-                helped = true;
-            }
-            // Give coconut/food if available
-            else if (hasFood(member.inventory) && targetMember.needs.hunger < 0.5) {
-                removeFromInventory(member.inventory, 'coconut', 1);
-                addToInventory(targetMember.inventory, 'coconut', 1);
-                logTest(`Agent ${member.id} gave food to ${targetMember.id}`, 'success');
-                helped = true;
-            }
-            // Give spear if target needs it for fishing (and we have extras)
-            else if (task.giveSpear && member.inventory.tools.has('fishing_spear')) {
-                const toolData = member.inventory.tools.get('fishing_spear');
-                const spearCount = toolData?.count || 1;
-                if (spearCount > 1 || !FishingSystem.hasSpear(targetMember.inventory)) {
-                    // Remove one spear from us
-                    if (toolData.count && toolData.count > 1) {
-                        toolData.count--;
-                    } else {
-                        member.inventory.tools.delete('fishing_spear');
-                        if (member.inventory.equippedTool === 'fishing_spear') {
-                            member.inventory.equippedTool = null;
-                            CarryingSystem.removeSpear(member);
-                        }
-                    }
-                    // Give to target
-                    addTool(targetMember.inventory, 'fishing_spear');
-                    equipTool(targetMember.inventory, 'fishing_spear');
-                    CarryingSystem.attachSpear(targetMember);
-                    logTest(`Agent ${member.id} gave spear to ${targetMember.id}`, 'success');
-                    helped = true;
-                }
-            }
-            
-            if (helped) {
-                CarryingSystem.updateCarryVisual(member);
-                CarryingSystem.updateCarryVisual(targetMember);
-            }
-        }
-        CarryingSystem.clearCarryVisual(member);
-        member.state = 'idle';
-        member.task = null;
-        return;
-    }
-
-    member.state = 'idle';
-    member.task = null;
-}
-
-function handleEating(member) {
-    const task = member.task;
-    const resourceId = task?.resourceId || 'coconut';
-    const removed = removeFromInventory(member.inventory, resourceId, 1);
-    if (!removed) return;
-
-    const nutrition = RESOURCES[resourceId.toUpperCase()]?.nutrition || CONFIG.coconutNutrition;
-    const itemData = Array.isArray(removed) ? removed[0] : null;
-    const isRaw = false;
-    const isSpoiled = false;
-
-    applyFoodToNeeds(member.needs, {
-        nutrition,
-        isRaw,
-        isSpoiled
-    });
-
-    // If still hungry and has more, eat one more, else keep one to haul
-    const remaining = getInventoryCount(member.inventory, resourceId);
-    if (member.needs.hunger < 0.6 && remaining > 0) {
-        applyFoodToNeeds(member.needs, { nutrition, isRaw, isSpoiled });
-        removeFromInventory(member.inventory, resourceId, 1);
-    }
-
-    if (getInventoryCount(member.inventory, resourceId) > 0 && hut) {
-        // Carry leftovers back to hut
-        member.state = 'hauling';
-        member.task = { type: 'haul_to_hut' };
-        CarryingSystem.updateCarryVisual(member);
     }
 }
 
-// Helpers
+// ============================================
+// TRAIN CLASS
+// ============================================
 
-function angleTo(from, to) {
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    return Math.atan2(dx, dz);
-}
+class Train {
+    constructor(type, track) {
+        this.type = type; // 'sprinter' or 'intercity'
+        this.track = track; // 'northbound' or 'southbound'
+        this.position = track === 'northbound' ? 0 : CONFIG.TRACK_LENGTH;
+        this.velocity = 0;
+        this.maxSpeed = type === 'sprinter' ? CONFIG.SPRINTER_MAX_SPEED : CONFIG.INTERCITY_MAX_SPEED;
+        this.state = 'running'; // 'running', 'stopping_at_station', 'stopped_at_station', 'waiting_for_signal'
+        this.stationStopTimer = 0;
+        this.currentSegment = null;
+        this.direction = track === 'northbound' ? 1 : -1;
+        this.delay = 0;
 
-function normalizeAngle(a) {
-    while (a > Math.PI) a -= Math.PI * 2;
-    while (a < -Math.PI) a += Math.PI * 2;
-    return a;
-}
+        // Create visual representation
+        const length = type === 'sprinter' ? 8 : 12;
+        const geometry = new THREE.BoxGeometry(length, 2, 1.5);
+        const color = type === 'sprinter' ? 0xFFC917 : 0x003082;
+        const material = new THREE.MeshStandardMaterial({ color });
 
-function findNearestPalmWithCoconuts(member, coordinator = null) {
-    let nearest = null;
-    let nearestDist = Infinity;
-    const minDistanceBetweenWorkers = 5; // Prevent multiple agents working within 5 units
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.userData.train = this;
 
-    allTrees.forEach(treeData => {
-        if (treeData.mesh.userData.treeType === 'palm' && treeData.mesh.userData.coconuts > 0) {
-            // Skip if already claimed by another agent
-            if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+        this.updatePosition();
+        scene.add(this.mesh);
+    }
+
+    updatePosition() {
+        const offset = this.track === 'northbound' ? -CONFIG.TRACK_SPACING/2 : CONFIG.TRACK_SPACING/2;
+        this.mesh.position.set(
+            this.position - CONFIG.TRACK_LENGTH/2,
+            1,
+            offset
+        );
+
+        // Rotate to face direction of travel
+        this.mesh.rotation.y = this.direction === 1 ? 0 : Math.PI;
+    }
+
+    update(deltaTime) {
+        // Update segment occupancy
+        const newSegment = getSegmentForPosition(this.position, this.track);
+        if (newSegment !== this.currentSegment) {
+            if (this.currentSegment) {
+                this.currentSegment.release();
+            }
+            if (newSegment) {
+                newSegment.occupy(this);
+            }
+            this.currentSegment = newSegment;
+        }
+
+        // State machine
+        switch (this.state) {
+            case 'running':
+                this.updateRunning(deltaTime);
+                break;
+            case 'stopping_at_station':
+                this.updateStoppingAtStation(deltaTime);
+                break;
+            case 'stopped_at_station':
+                this.updateStoppedAtStation(deltaTime);
+                break;
+            case 'waiting_for_signal':
+                this.updateWaitingForSignal(deltaTime);
+                break;
+        }
+
+        this.updatePosition();
+    }
+
+    updateRunning(deltaTime) {
+        // Check if we need to stop at a station
+        const nextStation = this.getNextStation();
+        if (nextStation) {
+            const stationPos = nextStation.position * CONFIG.TRACK_LENGTH;
+            const distanceToStation = Math.abs(this.position - stationPos);
+
+            // Calculate braking distance
+            const brakingDistance = (this.velocity * this.velocity) / (2 * CONFIG.DECELERATION);
+
+            if (distanceToStation <= brakingDistance + 2) {
+                this.state = 'stopping_at_station';
+                this.targetStationPos = stationPos;
                 return;
             }
-
-            // Skip if any nearby resource is claimed (prevent crowding)
-            if (coordinator) {
-                let tooClose = false;
-                for (const [claimedId, agentId] of coordinator.claimedResources.entries()) {
-                    if (agentId === member.id) continue; // Skip own claims
-                    
-                    // Find the claimed resource
-                    let claimedResource = null;
-                    allTrees.forEach(t => {
-                        if (t.mesh.uuid === claimedId || t.mesh.id === claimedId) {
-                            claimedResource = t.mesh;
-                        }
-                    });
-                    
-                    if (claimedResource) {
-                        const distToClaimed = treeData.mesh.position.distanceTo(claimedResource.position);
-                        if (distToClaimed < minDistanceBetweenWorkers) {
-                            tooClose = true;
-                            break;
-                        }
-                    }
-                }
-                if (tooClose) return;
-            }
-
-            const dist = treeData.mesh.position.distanceTo(member.mesh.position);
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearest = treeData.mesh;
-            }
         }
-    });
 
-    return nearest;
-}
-
-function findNearestWoodOrStone(member) {
-    let best = null;
-    let bestDist = Infinity;
-
-    allTrees.forEach(treeData => {
-        const dist = treeData.mesh.position.distanceTo(member.mesh.position);
-        if (dist < bestDist) {
-            bestDist = dist;
-            best = { type: 'gather_wood', resourceId: 'wood', target: treeData.mesh };
-        }
-    });
-
-    allRocks.forEach(rock => {
-        const dist = rock.position.distanceTo(member.mesh.position);
-        if (dist < bestDist) {
-            bestDist = dist;
-            best = { type: 'gather_stone', resourceId: 'stone', target: rock };
-        }
-    });
-
-    return best;
-}
-
-function ensureCarryVisual(member) {
-    if (member.carryMesh) return;
-
-    const carryGeo = new THREE.SphereGeometry(0.18, 8, 8);
-    const carryMat = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
-    const carry = new THREE.Mesh(carryGeo, carryMat);
-    carry.castShadow = true;
-
-    carry.position.set(member.rightArm.position.x, member.rightArm.position.y - 0.1, member.rightArm.position.z + 0.15);
-    member.mesh.add(carry);
-    member.carryMesh = carry;
-}
-
-function clearCarryVisual(member) {
-    if (member.carryMesh) {
-        member.mesh.remove(member.carryMesh);
-        member.carryMesh.geometry.dispose();
-        member.carryMesh.material.dispose();
-        member.carryMesh = null;
-    }
-}
-
-function hutAsInventory() {
-    // Minimal adapter so we can reuse crafting helpers on hut storage
-    return {
-        slots: new Map(Object.entries(hut.storage).map(([id, count]) => [id, { count, items: [] }])),
-        maxSlots: 16
-    };
-}
-
-// Additional helper functions for improved AI
-function findNearestJungleTree(member, coordinator = null) {
-    const minDistanceBetweenWorkers = 5; // Prevent multiple agents working within 5 units
-    let nearest = null;
-    let nearestDist = Infinity;
-
-    allTrees.forEach(treeData => {
-        // Skip if already claimed by another agent
-        if (coordinator && coordinator.isResourceClaimed(treeData.mesh, member.id)) {
+        // Check signals
+        const nextSegment = getNextSegment(this.currentSegment, 'forward');
+        if (nextSegment && nextSegment.isOccupied()) {
+            // Red signal ahead - start braking
+            this.state = 'waiting_for_signal';
             return;
         }
 
-        const dist = treeData.mesh.position.distanceTo(member.mesh.position);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = treeData.mesh;
-        }
-    });
-
-    return nearest;
-}
-
-function findNearestRock(member, coordinator) {
-    let nearest = null;
-    let nearestDist = Infinity;
-    const minDistanceBetweenWorkers = 5; // Prevent multiple agents working within 5 units
-
-    allRocks.forEach(rock => {
-        // Skip if already claimed by another agent
-        if (coordinator && coordinator.isResourceClaimed(rock, member.id)) {
-            return;
+        // Accelerate to max speed
+        if (this.velocity < this.maxSpeed) {
+            this.velocity = Math.min(this.maxSpeed, this.velocity + CONFIG.ACCELERATION * deltaTime);
         }
 
-        // Skip if any nearby resource is claimed (prevent crowding)
-        if (coordinator) {
-            let tooClose = false;
-            for (const [claimedId, agentId] of coordinator.claimedResources.entries()) {
-                if (agentId === member.id) continue; // Skip own claims
-                
-                // Find the claimed resource
-                let claimedResource = null;
-                allTrees.forEach(t => {
-                    if (t.mesh.uuid === claimedId || t.mesh.id === claimedId) {
-                        claimedResource = t.mesh;
-                    }
-                });
-                allRocks.forEach(r => {
-                    if (r.uuid === claimedId || r.id === claimedId) {
-                        claimedResource = r;
-                    }
-                });
-                
-                if (claimedResource) {
-                    const distToClaimed = rock.position.distanceTo(claimedResource.position);
-                    if (distToClaimed < minDistanceBetweenWorkers) {
-                        tooClose = true;
-                        break;
-                    }
-                }
-            }
-            if (tooClose) return;
-        }
-
-        const dist = rock.position.distanceTo(member.mesh.position);
-        if (dist < nearestDist) {
-            nearestDist = dist;
-            nearest = rock;
-        }
-    });
-
-    return nearest;
-}
-
-function findNearestFish(member) {
-    // Use FishingSystem to find fish, checking claims
-    return FishingSystem.findNearestFish(member, fishList, fishingSystem);
-}
-
-function hasSpear(member) {
-    return FishingSystem.hasSpear(member.inventory);
-}
-
-function hasFood(inventory) {
-    return getInventoryCount(inventory, 'coconut') > 0 ||
-           getInventoryCount(inventory, 'fish') > 0;
-}
-
-function canCraftSpear(hut) {
-    if (!hut) return false;
-    return canCraft(hutAsInventory(), 'fishing_spear');
-}
-
-function getTotalSpearsInTribeAndHut() {
-    let total = hut ? (hut.storage.fishing_spear || 0) : 0;
-    tribeMembers.forEach(m => {
-        const tools = m.inventory?.tools;
-        if (tools?.has('fishing_spear')) {
-            total += 1;
-        }
-    });
-    return total;
-}
-
-// ============================================
-// FISH UPDATE
-// ============================================
-function updateFish(delta) {
-    // Update fish fleeing behavior
-    fishList.forEach(fish => {
-        // Check for nearby agents and flee
-        FishingSystem.updateFishFleeing(fish, tribeMembers, delta, FISHING_CONFIG.FLEE_DISTANCE);
-
-        // Normal swimming behavior
-        fish.angle += delta * fish.speed * 0.3;
-        fish.mesh.position.x = Math.cos(fish.angle) * fish.dist;
-        fish.mesh.position.z = Math.sin(fish.angle) * fish.dist;
-        fish.mesh.position.y = fish.yBase + Math.sin(clock.elapsedTime * 2 + fish.angle) * 0.25;
-        fish.mesh.rotation.y = fish.angle + Math.PI / 2;
-    });
-
-    // Spawn new fish occasionally to maintain population
-    if (seededRandom() < 0.01 * delta) { // Small chance per frame
-        FishingSystem.spawnFish(
-            scene,
-            fishList,
-            CONFIG.islandRadius,
-            CONFIG.waterLevel,
-            createRandomFish,
-            fishCount
-        );
+        this.position += this.velocity * deltaTime * this.direction;
     }
 
-    // Clean up fishing system claims
-    fishingSystem.cleanupClaims(tribeMembers);
-}
+    updateStoppingAtStation(deltaTime) {
+        const distanceToStop = Math.abs(this.position - this.targetStationPos);
 
-// ============================================
-// COCONUT REGENERATION
-// ============================================
-function regenerateCoconuts(delta) {
-    allTrees.forEach(treeData => {
-        if (treeData.mesh.userData.treeType === 'palm' && treeData.mesh.userData.coconuts < 3) {
-            if (seededRandom() < 0.002 * delta) {
-                treeData.mesh.userData.coconuts++;
-                
-                // Add visual coconut
-                const coconutMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.9 });
-                const coconutGeometry = new THREE.SphereGeometry(0.2, 8, 8);
-                const coconut = new THREE.Mesh(coconutGeometry, coconutMaterial);
-                const angle = seededRandom() * Math.PI * 2;
-                coconut.position.set(Math.cos(angle) * 0.6, 4.5 + seededRandom() * 2, Math.sin(angle) * 0.6);
-                coconut.userData.isCoconut = true;
-                treeData.mesh.add(coconut);
+        if (distanceToStop < 0.5 && this.velocity < 1) {
+            // Arrived at station
+            this.velocity = 0;
+            this.position = this.targetStationPos;
+            this.state = 'stopped_at_station';
+            this.stationStopTimer = CONFIG.STATION_STOP_TIME;
+        } else {
+            // Decelerate
+            this.velocity = Math.max(0, this.velocity - CONFIG.DECELERATION * deltaTime);
+            this.position += this.velocity * deltaTime * this.direction;
+        }
+    }
+
+    updateStoppedAtStation(deltaTime) {
+        this.stationStopTimer -= deltaTime;
+        if (this.stationStopTimer <= 0) {
+            this.state = 'running';
+        }
+    }
+
+    updateWaitingForSignal(deltaTime) {
+        // Decelerate
+        this.velocity = Math.max(0, this.velocity - CONFIG.DECELERATION * deltaTime);
+
+        if (this.velocity > 0) {
+            this.position += this.velocity * deltaTime * this.direction;
+        }
+
+        // Check if signal is clear
+        const nextSegment = getNextSegment(this.currentSegment, 'forward');
+        if (!nextSegment || !nextSegment.isOccupied()) {
+            this.state = 'running';
+        }
+    }
+
+    getNextStation() {
+        for (let station of CONFIG.STATIONS) {
+            const stationPos = station.position * CONFIG.TRACK_LENGTH;
+
+            if (this.direction === 1 && stationPos > this.position) {
+                return station;
+            } else if (this.direction === -1 && stationPos < this.position) {
+                return station;
             }
         }
-    });
-}
+        return null;
+    }
 
-// ============================================
-// CAMERA CONTROLS
-// ============================================
-function setupControls() {
-    document.addEventListener('keydown', (e) => {
-        switch (e.code) {
-            case 'KeyW': controls.forward = true; break;
-            case 'KeyS': controls.backward = true; break;
-            case 'KeyA': controls.left = true; break;
-            case 'KeyD': controls.right = true; break;
-            case 'KeyQ': controls.down = true; break;
-            case 'KeyE': controls.up = true; break;
-            case 'ShiftLeft':
-            case 'ShiftRight': controls.shift = true; break;
-        }
-    });
-    
-    document.addEventListener('keyup', (e) => {
-        switch (e.code) {
-            case 'KeyW': controls.forward = false; break;
-            case 'KeyS': controls.backward = false; break;
-            case 'KeyA': controls.left = false; break;
-            case 'KeyD': controls.right = false; break;
-            case 'KeyQ': controls.down = false; break;
-            case 'KeyE': controls.up = false; break;
-            case 'ShiftLeft':
-            case 'ShiftRight': controls.shift = false; break;
-        }
-    });
-    
-    renderer.domElement.addEventListener('click', () => {
-        if (CONFIG.cameraMode === 'free') {
-            renderer.domElement.requestPointerLock();
-        }
-    });
-    
-    document.addEventListener('pointerlockchange', () => {
-        isPointerLocked = document.pointerLockElement === renderer.domElement;
-        const hint = document.getElementById('controls-hint');
-        if (hint) hint.classList.toggle('hidden', isPointerLocked);
-    });
-    
-    document.addEventListener('mousemove', (e) => {
-        if (!isPointerLocked || CONFIG.cameraMode !== 'free') return;
-        
-        cameraYaw -= e.movementX * CONFIG.cameraSensitivity;
-        cameraPitch += e.movementY * CONFIG.cameraSensitivity;
-        cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
-    });
-}
+    isOffTrack() {
+        if (this.direction === 1 && this.position > CONFIG.TRACK_LENGTH) return true;
+        if (this.direction === -1 && this.position < 0) return true;
+        return false;
+    }
 
-function updateCamera(delta) {
-    if (CONFIG.cameraMode === 'orbit') {
-        // Distant orbit camera
-        const orbitRadius = CONFIG.islandRadius * 2.2;
-        const orbitHeight = 80;
-        
-        orbitCameraAngle += delta * 0.08;
-        
-        camera.position.set(
-            Math.cos(orbitCameraAngle) * orbitRadius,
-            orbitHeight,
-            Math.sin(orbitCameraAngle) * orbitRadius
-        );
-        
-        camera.lookAt(0, 8, 0);
-    } else {
-        // Free fly
-        const speed = CONFIG.cameraSpeed * (controls.shift ? 2.5 : 1) * delta;
-        
-        const forward = new THREE.Vector3(
-            -Math.sin(cameraYaw) * Math.cos(cameraPitch),
-            -Math.sin(cameraPitch),
-            -Math.cos(cameraYaw) * Math.cos(cameraPitch)
-        );
-        const right = new THREE.Vector3(-Math.cos(cameraYaw), 0, Math.sin(cameraYaw));
-        
-        if (controls.forward) camera.position.addScaledVector(forward, speed);
-        if (controls.backward) camera.position.addScaledVector(forward, -speed);
-        if (controls.right) camera.position.addScaledVector(right, speed);
-        if (controls.left) camera.position.addScaledVector(right, -speed);
-        if (controls.up) camera.position.y += speed;
-        if (controls.down) camera.position.y -= speed;
-        
-        // Keep above terrain
-        const minY = Math.max(getTerrainHeight(camera.position.x, camera.position.z) + 2, 3);
-        camera.position.y = Math.max(camera.position.y, minY);
-        
-        camera.rotation.order = 'YXZ';
-        camera.rotation.y = cameraYaw;
-        camera.rotation.x = -cameraPitch;
+    destroy() {
+        if (this.currentSegment) {
+            this.currentSegment.release();
+        }
+        scene.remove(this.mesh);
     }
 }
 
 // ============================================
-// GUI
+// SCENE SETUP
 // ============================================
-function setupGUI() {
-    const gui = new GUI({ container: document.getElementById('gui-container') });
-    gui.title('🏝️ Island Controls');
-    
-    // Simulation
-    const simFolder = gui.addFolder('Simulation');
-    simFolder.add(CONFIG, 'tribeMembers', 1, 25, 1).name('Agents').onChange(createTribeMembers);
-    simFolder.add(CONFIG, 'walkSpeed', 0.5, 5, 0.1).name('Walk Speed');
-    simFolder.add(CONFIG, 'simulationSpeed', 1, 50, 1).name('Speed (1x-50x)');
-    
-    // Time of Day
-    const timeFolder = gui.addFolder('Time of Day');
-    timeFolder.add(CONFIG, 'timeOfDay', 0, 1, 0.01).name('Time').onChange(updateTimeOfDay).listen();
-    timeFolder.add(CONFIG, 'autoPlayTime').name('Auto-play');
-    
-    // Camera
-    const camFolder = gui.addFolder('Camera');
-    camFolder.add(CONFIG, 'cameraSpeed', 10, 150, 5).name('Speed');
-    camFolder.add(CONFIG, 'cameraMode', ['free', 'orbit']).name('Mode').onChange(() => {
-        if (CONFIG.cameraMode === 'free') {
-            cameraYaw = 0;
-            cameraPitch = 0;
-        }
+
+function init() {
+    // Scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xE8F4F8);
+    scene.fog = new THREE.Fog(0xE8F4F8, 100, 300);
+
+    // Camera - angled top-down view
+    camera = new THREE.PerspectiveCamera(
+        45,
+        window.innerWidth / window.innerHeight,
+        1,
+        1000
+    );
+    camera.position.set(0, 150, 100);
+    camera.lookAt(0, 0, 0);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    sunLight.position.set(50, 100, 50);
+    sunLight.castShadow = true;
+    scene.add(sunLight);
+
+    // Ground
+    const groundGeometry = new THREE.PlaneGeometry(400, 400);
+    const groundMaterial = new THREE.MeshStandardMaterial({
+        color: 0x7CB342,
+        roughness: 0.8
     });
-    
-    // Quality
-    const qualityFolder = gui.addFolder('Quality');
-    qualityFolder.add(CONFIG, 'visualQuality', ['high', 'low']).name('Visual').onChange((v) => {
-        renderer.shadowMap.enabled = v === 'high';
-        renderer.setPixelRatio(v === 'high' ? Math.min(window.devicePixelRatio, 2) : 1);
-        sun.shadow.mapSize.width = v === 'high' ? 2048 : 1024;
-        sun.shadow.mapSize.height = v === 'high' ? 2048 : 1024;
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.5;
+    scene.add(ground);
+
+    // Create track
+    createTrack();
+
+    // Create stations
+    createStations();
+
+    // Create segments
+    createSegments();
+
+    // Create signals (between segments)
+    createSignals();
+
+    // Clock
+    clock = new THREE.Clock();
+
+    // Mouse events
+    window.addEventListener('click', onMouseClick);
+    window.addEventListener('resize', onWindowResize);
+
+    // Hide loading screen
+    setTimeout(() => {
+        document.getElementById('loading').classList.add('hidden');
+    }, 500);
+
+    // Start animation
+    animate();
+}
+
+function createTrack() {
+    const trackMaterial = new THREE.MeshStandardMaterial({
+        color: 0x4A4A4A,
+        metalness: 0.8,
+        roughness: 0.2
     });
-    
-    // Debug
-    const debugFolder = gui.addFolder('Debug');
-    debugFolder.add(CONFIG, 'showDebug').name('Show Stats').onChange((v) => {
-        document.getElementById('debug-overlay').style.display = v ? 'block' : 'none';
-    });
-    debugFolder.add({ runChecks: () => runSanityChecks(scene, tribeMembers, allTrees) }, 'runChecks').name('Run Sanity Checks');
-    debugFolder.add({ clearLog: clearTestLog }, 'clearLog').name('Clear Log');
-    
-    simFolder.open();
-    timeFolder.open();
+
+    // Northbound track
+    const northGeometry = new THREE.BoxGeometry(CONFIG.TRACK_LENGTH, 0.2, 0.8);
+    const northTrack = new THREE.Mesh(northGeometry, trackMaterial);
+    northTrack.position.set(0, 0, -CONFIG.TRACK_SPACING/2);
+    scene.add(northTrack);
+    tracks.northbound = northTrack;
+
+    // Southbound track
+    const southGeometry = new THREE.BoxGeometry(CONFIG.TRACK_LENGTH, 0.2, 0.8);
+    const southTrack = new THREE.Mesh(southGeometry, trackMaterial);
+    southTrack.position.set(0, 0, CONFIG.TRACK_SPACING/2);
+    scene.add(southTrack);
+    tracks.southbound = southTrack;
+
+    // Sleepers (railroad ties)
+    const sleeperMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 });
+    for (let i = 0; i < CONFIG.TRACK_LENGTH; i += 2) {
+        const sleeperGeometry = new THREE.BoxGeometry(0.3, 0.15, CONFIG.TRACK_SPACING * 2);
+        const sleeper = new THREE.Mesh(sleeperGeometry, sleeperMaterial);
+        sleeper.position.set(i - CONFIG.TRACK_LENGTH/2, -0.1, 0);
+        scene.add(sleeper);
+    }
+}
+
+function createStations() {
+    const platformMaterial = new THREE.MeshStandardMaterial({ color: 0xCCCCCC });
+
+    for (let stationConfig of CONFIG.STATIONS) {
+        const x = stationConfig.position * CONFIG.TRACK_LENGTH - CONFIG.TRACK_LENGTH/2;
+
+        // Platform
+        const platformGeometry = new THREE.BoxGeometry(12, 0.5, 8);
+        const platform = new THREE.Mesh(platformGeometry, platformMaterial);
+        platform.position.set(x, 0.25, 0);
+        scene.add(platform);
+
+        // Station building (simple box)
+        const buildingGeometry = new THREE.BoxGeometry(10, 5, 6);
+        const buildingMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+        const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+        building.position.set(x, 2.5, 8);
+        scene.add(building);
+
+        // Roof
+        const roofGeometry = new THREE.ConeGeometry(7, 2, 4);
+        const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xCC0000 });
+        const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+        roof.rotation.y = Math.PI / 4;
+        roof.position.set(x, 6, 8);
+        scene.add(roof);
+
+        // Create text label using CSS2DRenderer alternative - simple sprite
+        createStationLabel(x, stationConfig.name);
+
+        stations.push({
+            name: stationConfig.name,
+            position: stationConfig.position,
+            mesh: platform
+        });
+    }
+}
+
+function createStationLabel(x, name) {
+    // Create a simple box with text representation
+    const labelGeometry = new THREE.BoxGeometry(8, 1, 0.1);
+    const labelMaterial = new THREE.MeshStandardMaterial({ color: 0x003082 });
+    const label = new THREE.Mesh(labelGeometry, labelMaterial);
+    label.position.set(x, 7, 8);
+    scene.add(label);
+}
+
+function createSignals() {
+    // Create signals between stations
+    const signalPositions = [30, 60, 90, 120, 150, 180];
+
+    for (let pos of signalPositions) {
+        // Northbound signal
+        const northSignal = new Signal(pos, 'northbound');
+        scene.add(northSignal.group);
+        signals.push(northSignal);
+
+        // Southbound signal
+        const southSignal = new Signal(pos, 'southbound');
+        scene.add(southSignal.group);
+        signals.push(southSignal);
+    }
 }
 
 // ============================================
-// ANIMATION LOOP
+// TIMETABLE & SPAWNING
 // ============================================
+
+function updateTimetable(deltaTime) {
+    simulationTime += deltaTime;
+
+    // Spawn Sprinter
+    if (simulationTime >= nextSprinterSpawn) {
+        spawnTrain('sprinter');
+        nextSprinterSpawn = simulationTime + CONFIG.SPRINTER_INTERVAL;
+    }
+
+    // Spawn Intercity
+    if (simulationTime >= nextIntercitySpawn) {
+        spawnTrain('intercity');
+        nextIntercitySpawn = simulationTime + CONFIG.INTERCITY_INTERVAL;
+    }
+}
+
+function spawnTrain(type) {
+    // Alternate between northbound and southbound
+    const track = trains.length % 2 === 0 ? 'northbound' : 'southbound';
+    const train = new Train(type, track);
+    trains.push(train);
+}
+
+// ============================================
+// UPDATE & ANIMATION
+// ============================================
+
 function animate() {
     requestAnimationFrame(animate);
-    
-    const frameDelta = Math.min(clock.getDelta(), 0.1);
-    
-    // FPS tracking
-    frameCount++;
-    const now = performance.now();
-    if (now - lastFPSUpdate >= 1000) {
-        currentFPS = frameCount;
-        stepsPerSecond = stepCountThisSecond;
-        frameCount = 0;
-        stepCountThisSecond = 0;
-        lastFPSUpdate = now;
-    }
-    
-    // Fixed timestep simulation
-    simulationAccumulator += frameDelta * CONFIG.simulationSpeed;
-    
-    let steps = 0;
-    while (simulationAccumulator >= CONFIG.fixedTimestep && steps < CONFIG.maxStepsPerFrame) {
-        stepSimulation(CONFIG.fixedTimestep);
-        simulationAccumulator -= CONFIG.fixedTimestep;
-        steps++;
-        totalSimSteps++;
-        stepCountThisSecond++;
-    }
-    
-    // Update visuals
-    updateVisuals(frameDelta);
-    
-    // Update stats
-    const aliveAgents = tribeMembers.filter(m => m.alive).length;
-    const coconutsAvailable = allTrees.reduce((sum, t) => sum + (t.mesh.userData.coconuts || 0), 0);
-    
-    // Build stash display with tools included
-    const hutCoconuts = hut ? (hut.storage.coconut || 0) : 0;
-    const hutWood = hut ? (hut.storage.wood || 0) : 0;
-    const hutStone = hut ? (hut.storage.stone || 0) : 0;
-    const hutVines = hut ? (hut.storage.vine || 0) : 0;
-    const hutFish = hut ? (hut.storage.fish || 0) : 0;
-    const hutSpears = hut ? (hut.storage.fishing_spear || 0) : 0;
-    
-    const stashDisplay = `🥥${hutCoconuts} 🪵${hutWood} 🪨${hutStone} 🌿${hutVines} 🐟${hutFish} 🗡️${hutSpears}`;
-    
-    // Calculate crafting status
-    const craftingAgents = tribeMembers.filter(m => 
-        m.alive && m.task && (m.task.type === 'craft_spear' || m.task.type === 'walk_to_hut_to_craft')
-    );
-    let craftingStatus = 'None';
-    if (craftingAgents.length > 0) {
-        const craftingSpears = craftingAgents.filter(m => 
-            (m.task.recipeId === 'fishing_spear' || m.task.type === 'craft_spear')
-        ).length;
-        craftingStatus = `${craftingSpears} crafting 🗡️`;
-    } else if (hut && canCraft(hutAsInventory(), 'fishing_spear')) {
-        // Can craft but no one is - show requirements
-        const recipe = TOOLS.FISHING_SPEAR.recipe;
-        craftingStatus = `Can craft: 🪵${hutWood}/${recipe.wood} 🌿${hutVines || 0}/${recipe.vine}`;
-    } else if (hut) {
-        // Can't craft - show what's missing
-        const recipe = TOOLS.FISHING_SPEAR.recipe;
-        const needWood = Math.max(0, recipe.wood - (hutWood || 0));
-        const needVine = Math.max(0, recipe.vine - (hutVines || 0));
-        if (needWood > 0 || needVine > 0) {
-            craftingStatus = `Need: 🪵${needWood} 🌿${needVine}`;
+
+    const deltaTime = clock.getDelta();
+
+    // Update timetable
+    updateTimetable(deltaTime);
+
+    // Update all trains
+    for (let i = trains.length - 1; i >= 0; i--) {
+        const train = trains[i];
+        train.update(deltaTime);
+
+        // Remove trains that are off track
+        if (train.isOffTrack()) {
+            train.destroy();
+            trains.splice(i, 1);
         }
     }
-    
-    // Calculate task distribution
-    const taskCounts = {};
-    tribeMembers.filter(m => m.alive && m.task).forEach(m => {
-        const taskType = m.task.type;
-        taskCounts[taskType] = (taskCounts[taskType] || 0) + 1;
-    });
-    const taskStatus = Object.entries(taskCounts)
-        .map(([type, count]) => {
-            const short = type.replace('gather_', 'G').replace('_', ' ').substring(0, 8);
-            return `${short}:${count}`;
-        })
-        .slice(0, 3)
-        .join(' ');
-    
-    updateStats({
-        fps: currentFPS,
-        stepsPerSecond: stepsPerSecond,
-        agentsAlive: aliveAgents,
-        deaths: totalDeaths,
-        coconutsAvailable,
-        stashDisplay,
-        craftingStatus,
-        taskStatus: taskStatus || 'Idle'
-    });
-    
+
+    // Update signals
+    for (let signal of signals) {
+        const segment = getSegmentForPosition(signal.position, signal.track);
+        if (segment) {
+            signal.update(segment);
+        }
+    }
+
+    // Update UI
+    updateUI();
+
     // Render
     renderer.render(scene, camera);
 }
 
-function stepSimulation(delta) {
-    updateTribeMembers(delta);
-    regenerateCoconuts(delta);
-}
+// ============================================
+// UI UPDATES
+// ============================================
 
-function updateVisuals(delta) {
-    // Water
-    if (water) {
-        water.material.uniforms['time'].value += delta * 0.4;
+function updateUI() {
+    // Update time
+    const hours = Math.floor(simulationTime / 3600) % 24;
+    const minutes = Math.floor((simulationTime % 3600) / 60);
+    const seconds = Math.floor(simulationTime % 60);
+    document.getElementById('current-time').textContent =
+        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+    // Update active trains
+    document.getElementById('active-trains').textContent = trains.length;
+
+    // Update next trains
+    const nextTrainsHTML = [];
+
+    const timeToNextSprinter = Math.max(0, nextSprinterSpawn - simulationTime);
+    const timeToNextIntercity = Math.max(0, nextIntercitySpawn - simulationTime);
+
+    if (timeToNextSprinter < 600) {
+        const mins = Math.floor(timeToNextSprinter / 60);
+        const secs = Math.floor(timeToNextSprinter % 60);
+        nextTrainsHTML.push(
+            `<div><span class="train-badge badge-sprinter">SPR</span> <span>over ${mins}:${secs.toString().padStart(2, '0')}</span></div>`
+        );
     }
-    
-    // Camera
-    updateCamera(delta);
-    
-    // Fish
-    updateFish(delta);
-    
-    // Time of day auto-play
-    if (CONFIG.autoPlayTime) {
-        CONFIG.timeOfDay += delta * 0.015;
-        if (CONFIG.timeOfDay > 1) CONFIG.timeOfDay = 0;
-        updateTimeOfDay();
+
+    if (timeToNextIntercity < 600) {
+        const mins = Math.floor(timeToNextIntercity / 60);
+        const secs = Math.floor(timeToNextIntercity % 60);
+        nextTrainsHTML.push(
+            `<div><span class="train-badge badge-intercity">IC</span> <span>over ${mins}:${secs.toString().padStart(2, '0')}</span></div>`
+        );
+    }
+
+    document.getElementById('next-trains').innerHTML = nextTrainsHTML.join('');
+
+    // Update selected train info
+    if (selectedTrain && trains.includes(selectedTrain)) {
+        document.getElementById('selected-train-info').classList.remove('hidden');
+        document.getElementById('selected-type').innerHTML =
+            selectedTrain.type === 'sprinter'
+                ? '<span class="train-type-sprinter">Sprinter</span>'
+                : '<span class="train-type-intercity">Intercity</span>';
+
+        const speedKmh = Math.round(selectedTrain.velocity * 3.6); // rough conversion
+        document.getElementById('selected-speed').textContent = `${speedKmh} km/u`;
+
+        document.getElementById('selected-direction').textContent =
+            selectedTrain.track === 'northbound' ? 'Amsterdam → Amersfoort' : 'Amersfoort → Amsterdam';
+
+        document.getElementById('selected-delay').textContent = `${selectedTrain.delay} min`;
+
+        // Highlight selected train
+        selectedTrain.mesh.material.emissive = new THREE.Color(0x444444);
+        selectedTrain.mesh.material.emissiveIntensity = 0.3;
+    } else {
+        document.getElementById('selected-train-info').classList.add('hidden');
+        selectedTrain = null;
+    }
+
+    // Remove highlight from non-selected trains
+    for (let train of trains) {
+        if (train !== selectedTrain) {
+            train.mesh.material.emissive = new THREE.Color(0x000000);
+            train.mesh.material.emissiveIntensity = 0;
+        }
     }
 }
 
 // ============================================
-// RESIZE
+// EVENT HANDLERS
 // ============================================
-function onResize() {
+
+function onMouseClick(event) {
+    // Calculate mouse position in normalized device coordinates
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    // Raycast
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(trains.map(t => t.mesh));
+
+    if (intersects.length > 0) {
+        const clickedTrain = intersects[0].object.userData.train;
+        selectedTrain = clickedTrain;
+    } else {
+        selectedTrain = null;
+    }
+}
+
+function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // ============================================
-// ML-READY API
-// ============================================
-window.IslandSimulationAPI = {
-    getState: () => tribeMembers.map(a => ({
-        id: a.id,
-        position: { x: a.mesh.position.x, y: a.mesh.position.y, z: a.mesh.position.z },
-        hunger: a.hunger,
-        energy: a.energy,
-        alive: a.alive,
-        state: a.state,
-        inventory: { ...a.inventory }
-    })),
-    
-    getEnvironmentState: () => ({
-        trees: allTrees.map(t => ({
-            position: { x: t.mesh.position.x, y: t.mesh.position.y, z: t.mesh.position.z },
-            type: t.mesh.userData.treeType,
-            coconuts: t.mesh.userData.coconuts || 0
-        })),
-        timeOfDay: CONFIG.timeOfDay,
-        simulationSpeed: CONFIG.simulationSpeed
-    }),
-    
-    setSimulationSpeed: (speed) => { CONFIG.simulationSpeed = Math.max(1, Math.min(50, speed)); },
-    setTimeOfDay: (t) => { CONFIG.timeOfDay = Math.max(0, Math.min(1, t)); updateTimeOfDay(); },
-    
-    step: (n = 1) => { for (let i = 0; i < n; i++) stepSimulation(CONFIG.fixedTimestep); },
-    
-    reset: () => {
-        resetSeed(CONFIG.seed);
-        totalDeaths = 0;
-        createTribeMembers();
-        allTrees.forEach(t => {
-            if (t.mesh.userData.treeType === 'palm') {
-                t.mesh.userData.coconuts = 1 + Math.floor(seededRandom() * 3);
-            }
-        });
-    },
-    
-    runSanityChecks: () => runSanityChecks(scene, tribeMembers, allTrees)
-};
-
-// ============================================
 // START
 // ============================================
-init();
 
+init();
