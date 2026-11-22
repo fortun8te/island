@@ -1,6 +1,6 @@
 # 🏝️ Island Simulation
 
-A 3D tropical island survival simulation built with Three.js, featuring AI agents with complex survival behaviors, resource management, and an ML-ready architecture for training reinforcement learning models.
+A Three.js island simulation where agents gather resources and try to survive. The project includes an API for reinforcement learning experiments.
 
 ![Island Simulation](https://img.shields.io/badge/three.js-r160-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
